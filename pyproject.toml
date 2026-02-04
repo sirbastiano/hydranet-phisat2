@@ -9,6 +9,7 @@ authors = [
   { name = "Carlos Collado-Capell", email = "carlos.colladocapell@epfl.ch" },
   { name = "Roberto Del Prete", email = "roberto.delprete@esa.int" },
 ]
+readme = "README.md"
 requires-python = "==3.9.*"
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -38,4 +39,5 @@ dependencies = [
 distribution = true
 
 [tool.pdm.build]
-includes = ["pretrain", "downstream", "data_simulation"]
+package-dir = "src"
+packages = ["hydranet"]

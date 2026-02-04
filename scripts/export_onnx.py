@@ -16,7 +16,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from hydranet_teacher import PhiSatNetDownstream
+from hydranet.models.teacher import PhiSatNetDownstream
 
 
 def setup_logging(log_file_path: str) -> logging.Logger:
@@ -149,8 +149,9 @@ def create_sample_input(shape: tuple, output_path: str, logger: logging.Logger =
 def main():
     """Main function to generate the ONNX-compatible model."""
     # Create output directories first
-    output_dir = Path('/home/philab/Desktop/hydranet/onnx')
-    output_dir.mkdir(exist_ok=True)
+    repo_root = Path(__file__).resolve().parents[1]
+    output_dir = repo_root / 'outputs' / 'onnx'
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     # Setup logging
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -177,17 +178,17 @@ def main():
     
     # Clear module cache to ensure latest fixes are loaded
     modules_to_reload = [
-        'geoaware_blocks',
-        'geoaware_foundation', 
-        'util_tools',
-        'phisatnet'
+        'hydranet.models.geoaware_blocks',
+        'hydranet.models.geoaware_foundations',
+        'hydranet.models.util_tools',
+        'hydranet.models.teacher',
     ]
     
     logger.info("Clearing module cache for latest improvements...")
     clear_module_cache(modules_to_reload)
     
     # Re-import to get latest fixes
-    from hydranet_teacher import PhiSatNetDownstream
+    from hydranet.models.teacher import PhiSatNetDownstream
     
     # Create ONNX-compatible model
     logger.info("Creating ONNX-compatible model...")
