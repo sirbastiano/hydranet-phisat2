@@ -1,0 +1,1 @@
+1. Add weights of the model to the repository.
