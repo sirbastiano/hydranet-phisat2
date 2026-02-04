@@ -1,0 +1,41 @@
+[build-system]
+requires = ["pdm-backend>=2.0"]
+build-backend = "pdm.backend"
+
+[project]
+name = "hydranet"
+version = "0.0.1"
+authors = [
+  { name = "Carlos Collado-Capell", email = "carlos.colladocapell@epfl.ch" },
+  { name = "Roberto Del Prete", email = "roberto.delprete@esa.int" },
+]
+requires-python = "==3.9.*"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "pyyaml",
+  "matplotlib",
+  "numpy",
+  "pandas",
+  "torch==2.4.0",
+  "torchvision==0.19.0",
+  "torchaudio==2.4.0",
+  "torchinfo",
+  "tabulate",
+  "lmdb",
+  "tqdm",
+  "scipy",
+  "timm",
+  "pytorch-lightning",
+  "scikit-multilearn",
+  "buteo",
+  "fvcore",
+]
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.build]
+includes = ["pretrain", "downstream", "data_simulation"]
