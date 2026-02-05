@@ -1,4 +1,4 @@
-# HydraNet (PhiSat2)
+# HydraNet
 
 Python package for loading models.
 
