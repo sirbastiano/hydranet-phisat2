@@ -81,7 +81,7 @@ def get_model_weights(
     # Filter for latest checkpoint if requested
     if latest_only and 'datetime' in results.columns:
         # Sort by datetime descending and take the first (latest)
-        results = results.sort_values('datetime', ascending=False).head(1)
+        results = results.sort_values(by='datetime', ascending=False).head(1)  # type: ignore
         if verbose and len(results) > 0:
             print(f"Found latest checkpoint from {results.iloc[0]['datetime']}")
     else:
