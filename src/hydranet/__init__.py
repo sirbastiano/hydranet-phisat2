@@ -8,6 +8,12 @@ from .weights import (
     get_model_weights,
     list_available_weights,
 )
+from .model_analysis import (
+    split_model,
+    ModelComponents,
+    get_layer_names,
+    print_model_structure,
+)
 
 __all__ = [
     "DEFAULT_STUDENT_CONFIG",
@@ -20,4 +26,8 @@ __all__ = [
     "get_model_weights",
     "list_available_weights",
     "get_available_combinations",
+    "split_model",
+    "ModelComponents",
+    "get_layer_names",
+    "print_model_structure",
 ]
