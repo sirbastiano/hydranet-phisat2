@@ -195,7 +195,6 @@ Desktop.ini
 
 # Model checkpoints
 checkpoints/
-models/
 weights/
 *.pth
 *.pt
