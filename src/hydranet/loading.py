@@ -14,6 +14,34 @@ from .models.teacher import PhiSatNetDownstream
 from .weights import get_model_weights
 
 
+def _make_student_checkpoint_compatible(model: PhisatNet, state_dict: dict) -> dict:
+    """
+    Apply backward-compatible key fixes for student checkpoints.
+
+    - Maps legacy classifier head weights to `final_conv.*` when needed.
+    - Fills missing ConvNeXt layer-scale gamma parameters from model defaults.
+    """
+    patched_state = dict(state_dict)
+    model_state = model.state_dict()
+
+    # Legacy head naming used in some checkpoints.
+    if "final_conv.weight" not in patched_state and "classifier.weight" in patched_state:
+        if model_state["final_conv.weight"].shape == patched_state["classifier.weight"].shape:
+            patched_state["final_conv.weight"] = patched_state["classifier.weight"]
+            patched_state.pop("classifier.weight", None)
+    if "final_conv.bias" not in patched_state and "classifier.bias" in patched_state:
+        if model_state["final_conv.bias"].shape == patched_state["classifier.bias"].shape:
+            patched_state["final_conv.bias"] = patched_state["classifier.bias"]
+            patched_state.pop("classifier.bias", None)
+
+    # Older checkpoints may not include layer-scale gamma parameters.
+    for key in model_state:
+        if key.endswith(".convnext_block.gamma") and key not in patched_state:
+            patched_state[key] = model_state[key]
+
+    return patched_state
+
+
 def load_student(
     preset: str = "checkpoint",  # Changed default to match HF checkpoint architecture
     *,
@@ -53,6 +81,7 @@ def load_student(
         ... )
     """
     import torch
+    import torch.nn as nn
     
     model = create_phisatnet(config=preset, **overrides)
     
@@ -69,6 +98,17 @@ def load_student(
         if weight_paths:
             print(f"Loading weights from: {weight_paths[0]}")
             state_dict = torch.load(weight_paths[0], map_location='cpu', weights_only=True)
+
+            # Auto-align output classes to checkpoint head when user did not set n_classes.
+            if "n_classes" not in overrides and "classifier.weight" in state_dict:
+                ckpt_out = int(state_dict["classifier.weight"].shape[0])
+                model_out = int(model.final_conv.out_channels)
+                if ckpt_out != model_out:
+                    model.final_conv = nn.Conv2d(model.final_conv.in_channels, ckpt_out, kernel_size=1)
+                    model.n_classes = ckpt_out
+                    print(f"  Adjusted n_classes to checkpoint head: {ckpt_out}")
+
+            state_dict = _make_student_checkpoint_compatible(model, state_dict)
             
             # Load with strict=False by default to handle classifier vs segmentation head differences
             missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=strict)
