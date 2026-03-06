@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -12,6 +13,14 @@ from typing import Optional, Protocol, Tuple
 
 import numpy as np
 import torch
+
+try:
+    import onnx
+except ImportError:  # pragma: no cover - optional at import time
+    onnx = None
+
+
+OPENVINO_2020_3_MAX_OPSET = 11
 
 
 class ExportConfig(Protocol):
@@ -34,6 +43,7 @@ class ModelExporter:
         host_mount_root: str | Path = "/home/philab/Desktop/hydranet",
         container_mount_root: str | Path = "/home/mount",
         docker_image: str = "openvino/ubuntu18_dev:2020.3",
+        opset_version: int = OPENVINO_2020_3_MAX_OPSET,
     ) -> None:
         self.config = config
         self.experiment_dir = Path(experiment_dir)
@@ -45,10 +55,13 @@ class ModelExporter:
         self.host_mount_root = Path(host_mount_root)
         self.container_mount_root = Path(container_mount_root)
         self.docker_image = docker_image
+        self.opset_version = opset_version
 
         self.experiment_dir.mkdir(parents=True, exist_ok=True)
         self.onnx_dir.mkdir(parents=True, exist_ok=True)
         self.openvino_dir.mkdir(parents=True, exist_ok=True)
+
+        self._validate_opset_version(self.opset_version)
 
     def _to_container_path(self, host_path: Path) -> str:
         """Map a host path into the container mount path."""
@@ -59,6 +72,35 @@ class ModelExporter:
                 f"Path '{host_path}' is outside host_mount_root '{self.host_mount_root}'."
             ) from exc
         return str(self.container_mount_root / rel_path)
+
+    def _validate_opset_version(self, opset_version: int) -> None:
+        """Reject ONNX opsets unsupported by OpenVINO 2020.3 conversion flow."""
+        if opset_version < 1:
+            raise ValueError(f"Invalid ONNX opset_version={opset_version}.")
+        if opset_version > OPENVINO_2020_3_MAX_OPSET:
+            raise ValueError(
+                "OpenVINO 2020.3 export requires ONNX opset <= "
+                f"{OPENVINO_2020_3_MAX_OPSET}. Received opset_version={opset_version}."
+            )
+
+    def _validate_onnx_model(self, onnx_path: Path) -> None:
+        """Run a local ONNX checker pass and verify the exported opset."""
+        if onnx is None:
+            self.logger.warning("onnx is not installed; skipping exported graph validation.")
+            return
+
+        model = onnx.load(str(onnx_path))
+        onnx.checker.check_model(model)
+        opset_imports = [entry.version for entry in model.opset_import if entry.domain in ("", "ai.onnx")]
+        if not opset_imports:
+            raise RuntimeError(f"Unable to determine ONNX opset for '{onnx_path}'.")
+
+        exported_opset = max(opset_imports)
+        if exported_opset > OPENVINO_2020_3_MAX_OPSET:
+            raise RuntimeError(
+                f"Exported ONNX opset {exported_opset} exceeds OpenVINO 2020.3 support."
+            )
+        self.logger.info("ONNX checker passed. Exported opset: %s", exported_opset)
 
     def export_model_to_onnx(
         self,
@@ -76,6 +118,7 @@ class ModelExporter:
             dummy_input: Example input tensor for tracing.
             opset_version: ONNX opset version.
         """
+        self._validate_opset_version(opset_version)
         self.logger.info("Starting ONNX export with opset version %s", opset_version)
         self.logger.info("Model input shape: %s", tuple(dummy_input.shape))
         self.logger.info("Model input dtype: %s", dummy_input.dtype)
@@ -110,6 +153,7 @@ class ModelExporter:
                 dynamic_axes=None,
             )
             self.logger.info("Model successfully exported to %s", output_path)
+            self._validate_onnx_model(Path(output_path))
 
             file_size_mb = os.path.getsize(output_path) / (1024 * 1024)
             self.logger.info("ONNX model size: %.2f MB", file_size_mb)
@@ -143,7 +187,7 @@ class ModelExporter:
                 model=model,
                 dummy_input=dummy_input,
                 output_path=str(onnx_path),
-                opset_version=11,
+                opset_version=self.opset_version,
             )
         except Exception as exc:
             self.logger.error("ONNX export failed: %s", exc)
@@ -170,8 +214,16 @@ class ModelExporter:
         """Convert an ONNX model to OpenVINO IR format in Docker."""
         self.logger.info("=== OpenVINO Conversion Phase ===")
 
+        onnx_model_path = self.onnx_dir / "model.onnx"
+        if not onnx_model_path.exists():
+            self.logger.error("OpenVINO conversion skipped: missing ONNX model at %s", onnx_model_path)
+            return None, 0.0
+        if shutil.which("docker") is None:
+            self.logger.error("OpenVINO conversion skipped: docker not available in PATH.")
+            return None, 0.0
+
         convert_script_path = self.experiment_dir / "convert_openvino.sh"
-        onnx_model_container_path = self._to_container_path(self.onnx_dir / "model.onnx")
+        onnx_model_container_path = self._to_container_path(onnx_model_path)
         output_dir_container_path = self._to_container_path(self.openvino_dir)
         script_container_path = self._to_container_path(convert_script_path)
 
@@ -179,6 +231,8 @@ class ModelExporter:
         scale_values = ",".join(["1"] * self.config.n_channels)
 
         convert_script_content = f"""#!/bin/bash
+set -euo pipefail
+
 # Source OpenVINO environment
 source /opt/intel/openvino/bin/setupvars.sh
 
@@ -197,6 +251,7 @@ mkdir -p "$OUTPUT_DIR"
 python3 $PYPATH \\
     --input_model "$ONNX_MODEL" \\
     --data_type FP16 \\
+    --input input \\
     --input_shape "[1,{self.config.n_channels},{self.config.input_size},{self.config.input_size}]" \\
     --mean_values "[{mean_values}]" \\
     --scale_values "[{scale_values}]" \\
@@ -218,7 +273,6 @@ ls -la "$OUTPUT_DIR/"
         docker_cmd = [
             "docker",
             "run",
-            "-it",
             "--rm",
             "--platform",
             "linux/amd64",
