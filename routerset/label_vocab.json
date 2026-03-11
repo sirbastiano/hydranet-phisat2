@@ -1,0 +1,28 @@
+{
+  "labels": [
+    "cloud",
+    "land",
+    "water",
+    "turbid_water",
+    "active_fire",
+    "burned_area",
+    "marine_plastic",
+    "marine_oil",
+    "marine_algae",
+    "marine_sediments",
+    "tree_cover",
+    "shrubland",
+    "grassland",
+    "cropland",
+    "built_up",
+    "bare_sparse_vegetation",
+    "snow_ice",
+    "permanent_water",
+    "herbaceous_wetland",
+    "mangroves",
+    "moss_lichen",
+    "road_present",
+    "building_present",
+    "building_dense"
+  ]
+}

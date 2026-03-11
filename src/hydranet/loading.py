@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+import csv
+from pathlib import Path
+from typing import Mapping, Optional, Sequence
 
 from .models.student import (
     DEFAULT_STUDENT_CONFIG,
     PhisatNet,
     create_phisatnet,
     list_phisatnet_configs,
+)
+from .models.moe_student import (
+    MoEStudent,
+    build_moe_student_from_models,
 )
 from .models.teacher import PhiSatNetDownstream
 from .weights import get_model_weights
@@ -210,3 +216,177 @@ def load_teacher(
         activation=activation,
         freeze_body=freeze_body,
     )
+
+
+def _load_student_catalog_rows() -> list[dict[str, str]]:
+    catalog_path = Path(__file__).parent / "model_weights.csv"
+    with catalog_path.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        return [row for row in reader if row["model"] == "student" and row.get("task")]
+
+
+def _resolve_default_moe_experts(
+    *,
+    allowed_tasks: Optional[Sequence[str]] = None,
+    training: str = "finetuning",
+    n_shots: int = 5000,
+) -> list[str]:
+    rows = _load_student_catalog_rows()
+    available = {
+        row["task"]
+        for row in rows
+        if row["training"] == training and row.get("n_shots") == str(float(n_shots))
+    }
+    if allowed_tasks is not None:
+        available &= set(allowed_tasks)
+    if not available:
+        raise ValueError(
+            f"No student expert checkpoints available for training={training!r}, n_shots={n_shots}."
+        )
+    return sorted(available)
+
+
+def load_student_moe(
+    *,
+    expert_tasks: Optional[Sequence[str]] = None,
+    allowed_default_tasks: Sequence[str] = ("anomaly_detection", "fire", "worldfloods"),
+    encoder_source_task: Optional[str] = None,
+    preset: str = "checkpoint",
+    training: str = "finetuning",
+    n_shots: int = 5000,
+    weights_dir: Optional[str] = None,
+    auto_load_weights: bool = True,
+    strict: bool = False,
+    threshold: float = 0.5,
+    top_k: Optional[int] = None,
+    switcher_hidden_dim: Optional[int] = None,
+    switcher_dropout: float = 0.0,
+    **overrides: object,
+) -> MoEStudent:
+    """
+    Assemble a MoE student from multiple student checkpoints.
+
+    By default this uses the routerset-compatible expert subset.
+    """
+    selected_tasks = list(expert_tasks or _resolve_default_moe_experts(
+        allowed_tasks=allowed_default_tasks,
+        training=training,
+        n_shots=n_shots,
+    ))
+    student_models: dict[str, PhisatNet] = {}
+    expert_metadata: dict[str, dict[str, object]] = {}
+
+    for task in selected_tasks:
+        checkpoint_path = None
+        if auto_load_weights:
+            weight_paths = get_model_weights(
+                training=training,
+                model="student",
+                task=task,
+                n_shots=n_shots,
+                download_dir=weights_dir,
+                latest_only=True,
+            )
+            checkpoint_path = weight_paths[0] if weight_paths else None
+        model = load_student(
+            preset=preset,
+            task=task,
+            n_shots=n_shots,
+            training=training,
+            weights_dir=weights_dir,
+            auto_load_weights=False,
+            strict=strict,
+            **overrides,
+        )
+        if checkpoint_path is not None:
+            import torch
+            import torch.nn as nn
+
+            state_dict = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+            if "n_classes" not in overrides and "classifier.weight" in state_dict:
+                ckpt_out = int(state_dict["classifier.weight"].shape[0])
+                model_out = int(model.final_conv.out_channels)
+                if ckpt_out != model_out:
+                    model.final_conv = nn.Conv2d(model.final_conv.in_channels, ckpt_out, kernel_size=1)
+                    model.n_classes = ckpt_out
+            state_dict = _make_student_checkpoint_compatible(model, state_dict)
+            model.load_state_dict(state_dict, strict=strict)
+        student_models[task] = model
+        expert_metadata[task] = {
+            "training": training,
+            "n_shots": int(n_shots),
+            "checkpoint_path": checkpoint_path,
+            "threshold": float(threshold),
+        }
+
+    return build_moe_student_from_models(
+        student_models,
+        encoder_source_task=encoder_source_task,
+        threshold=threshold,
+        top_k=top_k,
+        switcher_hidden_dim=switcher_hidden_dim,
+        switcher_dropout=switcher_dropout,
+        expert_metadata=expert_metadata,
+    )
+
+
+def save_student_moe_bundle(
+    model: MoEStudent,
+    path: str | Path,
+    *,
+    metadata: Optional[Mapping[str, object]] = None,
+) -> Path:
+    """Save a single-file bundle containing the shared encoder, switcher, and decoder experts."""
+    import torch
+
+    bundle_path = Path(path)
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "bundle_type": "hydranet_student_moe",
+        "bundle_version": 1,
+        "model_config": model.get_bundle_config(),
+        "state_dict": model.state_dict(),
+        "metadata": dict(metadata or {}),
+    }
+    torch.save(payload, bundle_path)
+    return bundle_path
+
+
+def load_student_moe_bundle(path: str | Path, *, map_location: str = "cpu") -> MoEStudent:
+    """Load a MoE student from a bundle saved by `save_student_moe_bundle`."""
+    import torch
+
+    bundle = torch.load(path, map_location=map_location, weights_only=False)
+    if bundle.get("bundle_type") != "hydranet_student_moe":
+        raise ValueError(f"Unsupported bundle type: {bundle.get('bundle_type')!r}")
+
+    config = dict(bundle["model_config"])
+    encoder_config = dict(config["encoder_config"])
+    source_task = config["encoder_source_task"]
+    expert_configs: dict[str, dict[str, object]] = {
+        name: dict(value) for name, value in config["experts"].items()
+    }
+
+    student_models: dict[str, PhisatNet] = {}
+    for name, expert in expert_configs.items():
+        model = create_phisatnet(
+            config="checkpoint",
+            n_channels=int(encoder_config["n_channels"]),
+            n_classes=int(expert["output_channels"]),
+            base_filters=int(encoder_config["base_filters"]),
+            depth=int(encoder_config["depth"]),
+            channel_multipliers=list(encoder_config["channel_multipliers"]),
+        )
+        student_models[name] = model
+
+    moe_model = build_moe_student_from_models(
+        student_models,
+        encoder_source_task=source_task,
+        threshold=float(config["threshold"]),
+        top_k=int(config["top_k"]),
+        switcher_hidden_dim=int(config["switcher"]["hidden_dim"]),
+        switcher_dropout=float(config["switcher"]["dropout"]),
+        expert_metadata=expert_configs,
+    )
+    moe_model.load_state_dict(bundle["state_dict"])
+    return moe_model
