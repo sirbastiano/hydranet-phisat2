@@ -150,6 +150,29 @@ def _drop_manifest_rows(root: Path, *, expert: str, split: str) -> None:
         path.write_text("\n".join(json.dumps(row) for row in kept) + "\n", encoding="utf-8")
 
 
+def _write_mock_training_artifacts(output_dir: Path, release_dir: Path) -> None:
+    for path in [
+        output_dir / "runtime_environment.json",
+        output_dir / "preflight_report.json",
+        output_dir / "config.json",
+        output_dir / "dataset_report.json",
+        output_dir / "checkpoint_report.json",
+        output_dir / "metrics.json",
+        output_dir / "startup_log.txt",
+        output_dir / "startup_stage.json",
+        output_dir / "startup_gate.json",
+        output_dir / "routing_predictions.jsonl",
+        output_dir / "student_moe_bundle.pt",
+    ]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.suffix == ".pt":
+            path.write_bytes(b"bundle")
+        else:
+            path.write_text("{}", encoding="utf-8")
+    release_dir.mkdir(parents=True, exist_ok=True)
+    (release_dir / "release_manifest.json").write_text("{}", encoding="utf-8")
+
+
 class TestMoETraining(unittest.TestCase):
     def test_routerset_helpers(self) -> None:
         row = {
@@ -540,6 +563,136 @@ class TestMoETraining(unittest.TestCase):
             self.assertEqual(contract["layout"]["directories"]["release_dir"], str(release_dir))
             self.assertEqual(contract["layout"]["directories"]["checkpoints_dir"], str(root / "runtime" / "weights"))
             self.assertTrue((output_dir / "summary.json").exists())
+
+    def test_train_switcher_records_mocked_stage_sequence_and_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+            release_dir = output_dir / "bundle" / "phidranet_demo"
+            observed_events: list[str] = []
+
+            class FakeLightningModule:
+                def __init__(self, model, *, learning_rate: float, weight_decay: float) -> None:
+                    self.model = model
+                    self.learning_rate = learning_rate
+                    self.weight_decay = weight_decay
+
+            class FakeTrainer:
+                callback_metrics = {"val_loss": 0.125}
+
+                def fit(self, lightning_module, train_dataloaders=None, val_dataloaders=None) -> None:
+                    _ = (lightning_module, train_dataloaders, val_dataloaders)
+                    observed_events.append("fit")
+
+            class FakeModel:
+                encoder_source_task = "fire"
+
+            def _fake_probe(timeout_seconds: int) -> None:
+                observed_events.append(f"startup_gate:{timeout_seconds}")
+
+            def _fake_capture_baseline_summary(model, out_dir) -> Path:
+                _ = model
+                observed_events.append("prepare")
+                path = Path(out_dir) / "baseline_summary.json"
+                path.write_text("{}", encoding="utf-8")
+                return path
+
+            def _fake_save_bundle(model, output_path, metadata=None) -> Path:
+                _ = (model, metadata)
+                observed_events.append("export")
+                path = Path(output_path)
+                path.write_bytes(b"bundle")
+                return path
+
+            def _fake_write_predictions(model, dataloader, output_path) -> Path:
+                _ = (model, dataloader)
+                path = Path(output_path)
+                path.write_text("{}\n", encoding="utf-8")
+                return path
+
+            def _fake_create_release(**kwargs):
+                _ = kwargs
+                for filename in [
+                    "student_moe_bundle.pt",
+                    "config.json",
+                    "metrics.json",
+                    "baseline_summary.json",
+                    "routing_predictions.jsonl",
+                    "dataset_report.json",
+                    "checkpoint_report.json",
+                    "release_manifest.json",
+                    "DEPLOY.md",
+                ]:
+                    (release_dir / filename).parent.mkdir(parents=True, exist_ok=True)
+                    (release_dir / filename).write_text("{}", encoding="utf-8")
+                return {
+                    "release_dir": str(release_dir),
+                    "bundle_path": str(release_dir / "student_moe_bundle.pt"),
+                    "config_path": str(release_dir / "config.json"),
+                    "metrics_path": str(release_dir / "metrics.json"),
+                    "baseline_summary_path": str(release_dir / "baseline_summary.json"),
+                    "routing_predictions_path": str(release_dir / "routing_predictions.jsonl"),
+                    "dataset_report_path": str(release_dir / "dataset_report.json"),
+                    "checkpoint_report_path": str(release_dir / "checkpoint_report.json"),
+                    "release_manifest_path": str(release_dir / "release_manifest.json"),
+                    "deployment_path": str(release_dir / "DEPLOY.md"),
+                }
+
+            with patch(
+                "hydranet.moe_training.resolve_student_checkpoint_report",
+                return_value=_checkpoint_report(weights_dir=str(root / "runtime" / "weights")),
+            ), patch(
+                "hydranet.moe_training.probe_lightning_import",
+                side_effect=_fake_probe,
+            ), patch(
+                "hydranet.moe_training.build_routerset_moe",
+                return_value=FakeModel(),
+            ), patch(
+                "hydranet.moe_training.capture_baseline_summary",
+                side_effect=_fake_capture_baseline_summary,
+            ), patch(
+                "hydranet.moe_training.save_student_moe_bundle",
+                side_effect=_fake_save_bundle,
+            ), patch(
+                "hydranet.moe_training.write_routing_predictions",
+                side_effect=_fake_write_predictions,
+            ), patch(
+                "hydranet.moe_training.create_phidranet_release",
+                side_effect=_fake_create_release,
+            ), patch(
+                "hydranet.moe_training.load_lightning_training_components",
+                return_value=(FakeLightningModule, lambda *args, **kwargs: FakeTrainer(), lambda *args, **kwargs: None),
+            ):
+                summary = train_switcher(
+                    routerset_dir=root,
+                    output_dir=output_dir,
+                    expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                    runtime_root=root / "runtime",
+                    target_size=16,
+                    target_channels=8,
+                    release_name="demo",
+                    startup_timeout_seconds=5,
+                    max_epochs=1,
+                )
+
+            self.assertEqual(observed_events, ["startup_gate:5", "prepare", "fit", "export"])
+            startup_log_entries = [
+                json.loads(line)
+                for line in (output_dir / "startup_log.txt").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            stage_order = [entry["stage"] for entry in startup_log_entries]
+            self.assertLess(stage_order.index("dataset_report_written"), stage_order.index("startup_gate_started"))
+            self.assertLess(stage_order.index("startup_gate_completed"), stage_order.index("fit_started"))
+            self.assertLess(stage_order.index("preflight_report_written"), stage_order.index("fit_started"))
+            self.assertLess(stage_order.index("fit_started"), stage_order.index("fit_completed"))
+            self.assertEqual(summary["contract"]["completed_stages"], ["preflight", "startup_gate", "training", "export"])
+            self.assertTrue((output_dir / "summary.json").exists())
+            self.assertTrue((output_dir / "startup_gate.json").exists())
+            self.assertTrue((output_dir / "preflight_report.json").exists())
+            self.assertTrue((output_dir / "student_moe_bundle.pt").exists())
+            self.assertTrue((release_dir / "release_manifest.json").exists())
 
     def test_train_switcher_failure_after_fit_started_records_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1109,6 +1262,67 @@ class TestMoETraining(unittest.TestCase):
             self.assertEqual(written["failure_stage"], "smoke")
             self.assertEqual(smoke_summary["failure_stage"], "smoke")
             self.assertEqual(smoke_summary["error_type"], "RuntimeError")
+
+    def test_run_full_training_preserves_training_failure_stage_before_smoke(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+            release_dir = output_dir / "bundle" / "phidranet_demo"
+            summary_path = output_dir / "summary.json"
+
+            failed_training_summary = {
+                "status": "failed",
+                "startup_stage": "startup_failed",
+                "failure_stage": "startup_failed",
+                "routerset_dir": str(root),
+                "dataset_root": str(resolve_routerset_dataset_root(root)),
+                "manifest_path": str(default_rebuilt_manifest_path(root)),
+                "runtime_root": str(root / "runtime"),
+                "runtime_environment_path": str(output_dir / "runtime_environment.json"),
+                "preflight_report_path": str(output_dir / "preflight_report.json"),
+                "bundle_path": "",
+                "metrics_path": "",
+                "prediction_path": "",
+                "config_path": str(output_dir / "config.json"),
+                "dataset_report_path": str(output_dir / "dataset_report.json"),
+                "checkpoint_report_path": str(output_dir / "checkpoint_report.json"),
+                "startup_log_path": str(output_dir / "startup_log.txt"),
+                "startup_stage_path": str(output_dir / "startup_stage.json"),
+                "startup_gate_path": str(output_dir / "startup_gate.json"),
+                "release_dir": str(release_dir),
+                "release_manifest_path": str(release_dir / "release_manifest.json"),
+                "contract": {"completed_stages": ["preflight"]},
+                "error_type": "TimeoutError",
+                "error": "Lightning import probe timed out",
+            }
+
+            _write_mock_training_artifacts(output_dir, release_dir)
+            (output_dir / "student_moe_bundle.pt").unlink()
+            (output_dir / "routing_predictions.jsonl").unlink()
+            (output_dir / "metrics.json").unlink()
+            summary_path.write_text(json.dumps(failed_training_summary), encoding="utf-8")
+
+            with patch(
+                "hydranet.moe_training.train_switcher",
+                side_effect=TimeoutError("Lightning import probe timed out"),
+            ):
+                with self.assertRaisesRegex(TimeoutError, "timed out"):
+                    run_full_training(
+                        routerset_dir=root,
+                        output_dir=output_dir,
+                        release_name="demo",
+                    )
+
+            smoke_summary = json.loads((output_dir / "smoke_test_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(smoke_summary["status"], "failed")
+            self.assertEqual(smoke_summary["failure_stage"], "startup_failed")
+            self.assertEqual(smoke_summary["training_summary_path"], str(summary_path))
+            self.assertEqual(smoke_summary["startup_stage_path"], str(output_dir / "startup_stage.json"))
+            self.assertEqual(smoke_summary["startup_log_path"], str(output_dir / "startup_log.txt"))
+            self.assertEqual(smoke_summary["manifest_path"], str(default_rebuilt_manifest_path(root)))
+            self.assertEqual(smoke_summary["bundle_path"], "")
+            self.assertEqual(smoke_summary["error_type"], "TimeoutError")
 
     def test_full_train_cli_requires_output_dir_and_release_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

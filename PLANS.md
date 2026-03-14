@@ -234,3 +234,38 @@ Publish a canonical full-training runbook that matches the current Make targets,
 ### Rollback
 - Revert the doc updates if they misstate the command surface or artifact contract.
 - No stateful rollback is required beyond removing any generated verification outputs.
+
+## US-008 ExecPlan
+
+### Goal
+Add regression tests that pin the mocked full-training orchestration sequence and failure signaling so future refactors do not silently reorder stages or weaken failure artifacts.
+
+### Scope
+- `tests/test_moe_training.py`
+- `PLANS.md`
+
+### Non-goals
+- No production-code behavior changes unless a regression test exposes a real contract bug
+- No documentation or CLI surface changes beyond what existing tests already exercise
+
+### Invariants
+- Regression tests must use mocks and local temp directories only; no live checkpoint downloads or network access
+- The orchestration contract must preserve the stage order from preflight through startup gate into fit/export and then smoke
+- Failure-path tests must continue to assert `failure_stage` and on-disk summary artifacts for non-zero exits
+
+### Steps
+1. Add a focused mocked `train_switcher(...)` regression test that asserts the stage transition sequence includes preflight, startup gate, fit, and export events in order and emits the expected artifacts.
+2. Add a mocked `run_full_training(...)` negative-path regression test that simulates a timeout/failure before smoke, then verifies `failure_stage`, failure artifacts, and re-raised non-zero behavior without touching live checkpoints.
+3. Run targeted and required repository validation, review the test-only diff for security/performance/regression risk, then record progress and commit.
+
+### Validation
+- `PYTHONPATH=src .venv/bin/python -m pytest tests/test_moe_training.py`
+- `make train-prepare PYTHON=.venv/bin/python`
+- `make smoketest PYTHON=.venv/bin/python`
+- `make smoketest-preflight PYTHON=.venv/bin/python`
+- `PYTHONPATH=src .venv/bin/python -m pytest`
+- `ruff check .`
+
+### Rollback
+- Revert the new regression tests if they assert an invalid contract or become flaky.
+- The change is test-only; rollback does not require state cleanup beyond removing generated test artifacts.

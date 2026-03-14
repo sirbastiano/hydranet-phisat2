@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-03-14 13:17:13 | run=20260314-115146-3579918 | iter=7 | mode=build | story=US-007 | duration=927s | status=success
 - 2026-03-14 13:01:42 | run=20260314-115146-3579918 | iter=6 | mode=build | story=US-006 | duration=758s | status=success
 - 2026-03-14 12:49:02 | run=20260314-115146-3579918 | iter=5 | mode=build | story=US-005 | duration=504s | status=success
 - 2026-03-14 12:40:36 | run=20260314-115146-3579918 | iter=4 | mode=build | story=US-004 | duration=945s | status=success
@@ -48,3 +49,7 @@
 [2026-03-14 13:15:33] US-007 verification complete: pytest passed; smoketest-preflight passed; train-prepare and smoketest hit the existing 60s Lightning import startup timeout; ruff check failed on pre-existing unrelated lint issues
 [2026-03-14 13:15:33] US-007 doc changes applied: canonical full-train runbook, env presets, output path map, and troubleshooting published in README/howtorun
 [2026-03-14 13:16:40] US-007 progress entry updated with commit hash and verification outcomes; preparing final metadata commit
+[2026-03-14 13:17:11] ITERATION 7 end (duration=927s)
+[2026-03-14 13:17:18] ITERATION 8 start (mode=build story=US-008)
+[2026-03-14 13:19:45] US-008 code changes applied: added mocked orchestration regression tests for stage sequencing, artifact emission, and pre-smoke failure-stage signaling.
+[2026-03-14 13:29:21] US-008 verification complete: targeted/full pytest passed; smoketest-preflight passed; train-prepare and smoketest hit the existing Lightning import timeout; repo-wide ruff remains blocked by pre-existing unrelated issues.
