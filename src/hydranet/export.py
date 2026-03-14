@@ -40,7 +40,7 @@ class ModelExporter:
         logger: logging.Logger,
         onnx_dir: str | Path | None = None,
         openvino_dir: str | Path | None = None,
-        host_mount_root: str | Path = "/home/philab/Desktop/hydranet",
+        host_mount_root: str | Path | None = None,
         container_mount_root: str | Path = "/home/mount",
         docker_image: str = "openvino/ubuntu18_dev:2020.3",
         opset_version: int = OPENVINO_2020_3_MAX_OPSET,
@@ -52,7 +52,11 @@ class ModelExporter:
         self.openvino_dir = (
             Path(openvino_dir) if openvino_dir is not None else self.experiment_dir / "openvino"
         )
-        self.host_mount_root = Path(host_mount_root)
+        self.host_mount_root = (
+            Path(host_mount_root)
+            if host_mount_root is not None
+            else self.experiment_dir.resolve().parent
+        )
         self.container_mount_root = Path(container_mount_root)
         self.docker_image = docker_image
         self.opset_version = opset_version

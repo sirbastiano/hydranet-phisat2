@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document explains the Mixture-of-Experts (MoE) student path added to this repository, how it is assembled from existing HydraNet student checkpoints, how the local `routerset/` artifact is used for routing supervision, and what the current v1 limitations are.
+This document explains the Mixture-of-Experts (MoE) student path added to this repository, how it is assembled from existing HydraNet student checkpoints, how the local `routerset/` artifact is used for routing supervision, and how the final `phidranet` release package is created.
 
 The implementation is centered around these files:
 
@@ -57,7 +57,10 @@ Those skip connections are reused by whichever decoder experts are activated.
 Each expert is tied to one task name such as:
 
 - `anomaly_detection`
+- `burned_area`
 - `fire`
+- `lc`
+- `roads`
 - `worldfloods`
 
 Each expert can have a different output channel count because the downstream tasks do not share the same output head shape.
@@ -126,13 +129,16 @@ The default v1 configuration is:
 
 ### Default expert set
 
-Although the model catalog contains more student tasks, the MoE defaults were narrowed to the routerset-compatible set:
+The default MoE expert set is aligned to the full routerset task coverage:
 
 - `anomaly_detection`
+- `burned_area`
 - `fire`
+- `lc`
+- `roads`
 - `worldfloods`
 
-This is deliberate. The copied `routerset/` artifact is heterogeneous, and only those source families are currently compatible with the student’s 8-channel, channel-first input contract.
+The copied `routerset/` artifact is heterogeneous, so the training pipeline now includes deterministic adapters that normalize every source family into the student’s shared 8-channel, channel-first input contract.
 
 ### Architecture compatibility checks
 
@@ -199,7 +205,7 @@ The routing supervision pipeline is implemented in `src/hydranet/moe_training.py
 
 ### Why routerset is not used directly as semantic labels
 
-`routerset/manifest.jsonl` contains fields like:
+`routerset/multilabel_dataset/manifest.jsonl` contains fields like:
 
 - `source_dataset`
 - `label_names`
@@ -234,9 +240,9 @@ This becomes a filename like:
 
 and is resolved under:
 
-- `routerset/images/<source_dataset>/<source_split>/...`
+- `routerset/multilabel_dataset/images/<source_dataset>/<source_split>/...`
 
-### Why only a subset of routerset is used
+### How all routerset sources are adapted
 
 The full copied `routerset/` dataset mixes incompatible array layouts.
 
@@ -247,15 +253,23 @@ Examples found locally:
 - `anomaly_detection`: `(8, H, W)`
 - `burned_area`: `(7, H, W)`
 - `lc`: `(H, W, 10)`
-- `roads`: channel layout incompatible with the current student input contract
+- `roads`: channel-last or non-8-channel arrays depending on source material
 
-HydraNet student models are currently built around fixed 8-channel input, so v1 intentionally excludes:
+HydraNet student models are built around fixed 8-channel input, so the training pipeline applies deterministic source adapters:
 
-- `burned_area`
-- `lc`
-- `roads`
+- `fire`, `worldfloods`, `anomaly_detection`: kept as channel-first when already compatible
+- `burned_area`: padded from 7 channels to 8
+- `lc`: channel-last tensors are moved to channel-first and truncated from 10 channels to 8
+- `roads`: channel-last tensors are moved to channel-first and truncated from 10 channels to 8
 
-from routerset-backed switcher training.
+All sources are then converted into the canonical training tensor shape `8 x 256 x 256` without resizing.
+
+For large `anomaly_detection` inputs, the training path does not collapse the whole scene into one small image. Instead, it expands each full frame into deterministic non-overlapping `256 x 256` tiles and trains on those tiles as individual routing samples.
+
+For non-tiled samples:
+
+- if the spatial size is larger than `256`, the tensor is deterministically cut out to `256 x 256`
+- if the spatial size is smaller than `256`, the tensor is zero-padded onto a `256 x 256` canvas
 
 ## Dataset Adapter
 
@@ -263,14 +277,15 @@ The training dataset class is `RoutersetMoEDataset`.
 
 Its behavior is:
 
-- read `routerset/manifest.jsonl`
+- read `routerset/multilabel_dataset/manifest.jsonl`
 - keep only rows whose `source_dataset` is in the selected expert set
-- keep only the default compatible source families
 - keep only rows for the requested split
 - skip rows whose backing `.npy` file is missing
 - load arrays as float tensors
-- require channel-first `8 x H x W`
-- resize to a fixed square target size using bilinear interpolation
+- normalize every array into channel-first `8 x H x W`
+- tile large `anomaly_detection` frames into deterministic `256 x 256` samples
+- cut out non-tiled sources that are larger than the target window
+- zero-pad non-tiled sources that are smaller than the target window
 
 Each item returns:
 
@@ -280,7 +295,7 @@ Each item returns:
 - `source_sample_id`
 - `image_path`
 - `record_status`
-- `label_names`
+- `tile_origin`
 
 The target is a one-hot vector over the selected experts.
 
@@ -290,6 +305,8 @@ Training uses:
 
 - `RoutersetMoEDataModule`
 - `MoESwitcherLightningModule`
+
+The routerset dataset/preflight path is importable without Lightning. Lightning is loaded lazily only for real training, and failed startup now writes `startup_log.txt` plus `startup_stage.json`.
 
 ### Frozen modules
 
@@ -324,28 +341,48 @@ The prediction threshold is the same threshold used by MoE routing.
 
 `scripts/train_moe_switcher.py` is the command-line entrypoint for switcher training.
 
-It:
+It supports two workflows:
+
+- `--preflight-only` for dataset/checkpoint validation without training
+- full training plus final release-package creation
+
+In full training mode it:
 
 - builds the MoE with `load_student_moe(...)`
 - creates the routerset DataModule
 - saves run config and baseline summary
+- saves dataset and checkpoint reports
 - trains the switcher
 - writes metrics
 - saves the bundled MoE checkpoint
 - writes validation routing predictions
+- creates the final `outputs/phidranet/phidranet_<name>/` release directory
 
 Default outputs land under:
 
 - `outputs/moe/<timestamp>/`
 
-Saved artifacts include:
+Saved run artifacts include:
 
 - `config.json`
 - `baseline_summary.json`
+- `dataset_report.json`
+- `checkpoint_report.json`
 - `metrics.json`
 - `student_moe_bundle.pt`
 - `routing_predictions.jsonl`
 - `summary.json`
+
+Saved release artifacts include:
+
+- `student_moe_bundle.pt`
+- `config.json`
+- `metrics.json`
+- `dataset_report.json`
+- `checkpoint_report.json`
+- `routing_predictions.jsonl`
+- `release_manifest.json`
+- `DEPLOYMENT.md`
 
 ## Inference Script
 
@@ -360,6 +397,66 @@ It:
 - writes a small `summary.json`
 
 This script is aimed at routing inspection rather than downstream task evaluation.
+
+## Smoke Test Script
+
+`scripts/smoke_test_moe.py` runs a fast functional check of the complete MoE path.
+
+It performs these steps in one command:
+
+- rebuild routerset splits for MoE training if needed
+- run preflight on the rebuilt manifest
+- train the switcher for one epoch
+- reload the saved bundle
+- run validation routing inference
+- write a compact smoke summary artifact
+
+This is intended for trainability verification, not final model quality.
+
+## Preflight Validation
+
+`preflight_routerset_training(...)` validates the training inputs before a final run.
+
+It reports:
+
+- per-split sample counts
+- per-task shape distributions before normalization and at final training shape
+- selected expert set
+- resolved checkpoint path per expert
+- target image size and channel count
+
+It also enforces the canonical training gate:
+
+- every selected expert must have positive samples in both the train and validation split
+- every emitted training tensor must have the exact final shape `8 x 256 x 256`
+
+If either condition fails, preflight raises an error and the canonical run is blocked until routerset is rebuilt.
+
+The CLI exposes this with:
+
+```bash
+PYTHONPATH=src python3 scripts/train_moe_switcher.py --preflight-only
+```
+
+This is the recommended first step before starting a canonical `phidranet` training run.
+
+## Final `phidranet` Release Package
+
+The final creation workflow now produces a release-style artifact directory under:
+
+- `outputs/phidranet/phidranet_<name>/`
+
+That directory is intended to be the handoff artifact for the trained student-with-MoE-decoders model.
+
+It contains:
+
+- the final bundle
+- the exact training config
+- the final metrics snapshot
+- the dataset and checkpoint reports used to create it
+- a validation routing report
+- a release manifest
+- a short deployment note
 
 ## Baseline Capture
 
@@ -405,14 +502,17 @@ That means:
 - this is routing by originating dataset/task
 - not yet routing by semantic content across tasks
 
-### Constraint 2: Input compatibility is limited
+### Constraint 2: Input adaptation is deterministic and simple
 
-The routerset adapter currently supports only samples that already match the HydraNet student input layout:
+The routerset adapter now supports all routerset task families, but the adaptation policy is intentionally simple:
 
-- channel-first
-- 8 channels
+- transpose when channels are last
+- truncate channels when there are more than 8
+- zero-pad when there are fewer than 8
 
-Other source families are excluded instead of being adapted.
+This is reproducible and enough for the current release path, but it is still a heuristic adapter rather than a learned source-specific stem.
+
+For `anomaly_detection`, the deterministic policy is tile expansion rather than whole-image resize.
 
 ### Constraint 3: Experts are frozen
 
@@ -437,11 +537,11 @@ There is no unified merged prediction tensor in this version.
 
 The most useful follow-up improvements would be:
 
-1. Add deterministic adapters for non-8-channel routerset sources
-2. Expand the default expert set after those adapters are defined
-3. Add a semantic label-to-expert target builder for true multi-hot supervision
-4. Add richer evaluation reports for routing quality and expert usage balance
-5. Optionally support partial fine-tuning of the encoder or experts after switcher warm-up
+1. Add a semantic label-to-expert target builder for true multi-hot supervision
+2. Add richer evaluation reports for routing quality and expert usage balance
+3. Optionally support partial fine-tuning of the encoder or experts after switcher warm-up
+4. Replace simple channel truncation with more principled source-specific feature selection if needed
+5. Add explicit release versioning policy if these artifacts are to be published externally
 
 ## Practical Summary
 
@@ -452,6 +552,7 @@ In the current implementation, the MoE system works like this:
 - copy each checkpoint decoder to become an expert
 - train a small routing head on local routerset source labels
 - save everything into a single bundle
+- package the final trained model as a `phidranet` release directory
 - reload the bundle later and activate only the selected decoder experts at inference
 
-That gives this repository a working, routerset-backed MoE student path without changing the base HydraNet student architecture.
+That gives this repository a working, routerset-backed MoE student path and a final release-package creation flow without changing the base HydraNet student architecture.

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import warnings
+from collections.abc import Mapping
 from typing import Optional
 
 from .geoaware_blocks import CoreCNNBlock
@@ -137,10 +138,18 @@ class PhiSatNetDownstream(nn.Module):
         and (if applicable) bridge and decoder. Handles the case when the keys are
         prefixed with "module." (due to training with DP/DDP).
         """
-        checkpoint = torch.load(pretrained_path, map_location="cpu")
+        checkpoint = torch.load(pretrained_path, map_location="cpu", weights_only=True)
+        if not isinstance(checkpoint, Mapping):
+            raise TypeError(
+                f"Invalid checkpoint at '{pretrained_path}'. Expected a mapping, got {type(checkpoint).__name__}."
+            )
         
         # If the checkpoint is a dict with a 'state_dict' key, use that.
         state_dict = checkpoint["state_dict"] if "state_dict" in checkpoint else checkpoint
+        if not isinstance(state_dict, Mapping):
+            raise TypeError(
+                f"Invalid pretrained state_dict at '{pretrained_path}'. Expected a mapping, got {type(state_dict).__name__}."
+            )
 
         # Remove "module." prefix if it exists.
         new_state_dict = {}

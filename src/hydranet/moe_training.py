@@ -1380,7 +1380,7 @@ PYTHONPATH=src python3 scripts/infer_moe_switcher.py \\
   --output-dir outputs/moe/infer_{release_name}
 ```
 """
-    return save_text(Path(release_dir) / "DEPLOYMENT.md", text)
+    return save_text(Path(release_dir) / "DEPLOY.md", text)
 
 
 def create_phidranet_release(
@@ -1436,6 +1436,52 @@ def create_phidranet_release(
 
 def write_run_summary(output_dir: Union[str, Path], payload: Mapping[str, Any]) -> Path:
     return save_json(Path(output_dir) / "summary.json", payload)
+
+
+def run_exported_moe_inference(
+    *,
+    routerset_dir: Union[str, Path],
+    manifest_path: Union[str, Path],
+    output_dir: Union[str, Path],
+    bundle_path: Union[str, Path],
+    expert_names: Optional[Sequence[str]] = None,
+    batch_size: int = 4,
+    num_workers: int = 0,
+    target_size: int = DEFAULT_ROUTERSET_TARGET_SIZE,
+    target_channels: int = 8,
+    balanced_sampling: bool = True,
+) -> dict[str, str]:
+    inference_dir = ensure_dir(output_dir)
+    model = load_student_moe_bundle(bundle_path)
+    datamodule = RoutersetMoEDataModule(
+        routerset_dir,
+        manifest_path=manifest_path,
+        expert_names=list(expert_names or DEFAULT_ROUTERSET_EXPERTS),
+        batch_size=batch_size,
+        num_workers=num_workers,
+        target_size=target_size,
+        target_channels=target_channels,
+        balanced_sampling=balanced_sampling,
+    )
+    datamodule.setup("validate")
+    prediction_path = write_routing_predictions(
+        model,
+        datamodule.val_dataloader(),
+        inference_dir / "routing_predictions.jsonl",
+    )
+    summary_path = save_json(
+        inference_dir / "summary.json",
+        {
+            "status": "completed",
+            "bundle_path": str(bundle_path),
+            "prediction_path": str(prediction_path),
+            "manifest_path": str(manifest_path),
+        },
+    )
+    return {
+        "prediction_path": str(prediction_path),
+        "summary_path": str(summary_path),
+    }
 
 
 def train_switcher(
@@ -1496,6 +1542,7 @@ def train_switcher(
     preflight_report_path = Path(output_dir) / "preflight_report.json"
     metrics_path = Path(output_dir) / "metrics.json"
     summary_path = Path(output_dir) / "summary.json"
+    startup_gate_path = Path(output_dir) / "startup_gate.json"
 
     try:
         recorder.mark(
@@ -1566,6 +1613,19 @@ def train_switcher(
                 run_lightning_probe=True,
             )
             recorder.mark("startup_gate_completed")
+        else:
+            save_json(
+                startup_gate_path,
+                {
+                    "status": "skipped",
+                    "manifest_path": manifest_path_value,
+                    "lightning_probe": {
+                        "status": "skipped",
+                        "reason": "startup gate skipped by caller",
+                    },
+                },
+            )
+            recorder.mark("startup_gate_skipped")
 
         checkpoint_report = resolve_student_checkpoint_report(
             expert_names,
@@ -1699,7 +1759,7 @@ def train_switcher(
             "checkpoint_report_path": str(checkpoint_report_path),
             "startup_log_path": str(recorder.log_path),
             "startup_stage_path": str(recorder.stage_path),
-            "startup_gate_path": str(Path(output_dir) / "startup_gate.json") if (Path(output_dir) / "startup_gate.json").exists() else "",
+            "startup_gate_path": str(startup_gate_path) if startup_gate_path.exists() else "",
             "release_dir": release_summary["release_dir"],
             "release_manifest_path": release_summary["release_manifest_path"],
             "contract": contract,
@@ -1724,7 +1784,7 @@ def train_switcher(
             "metrics_path": str(metrics_path) if metrics_path.exists() else "",
             "startup_log_path": str(recorder.log_path),
             "startup_stage_path": str(recorder.stage_path),
-            "startup_gate_path": str(Path(output_dir) / "startup_gate.json") if (Path(output_dir) / "startup_gate.json").exists() else "",
+            "startup_gate_path": str(startup_gate_path) if startup_gate_path.exists() else "",
             "summary_path": str(summary_path),
             "error_type": type(error).__name__,
             "error": str(error),
@@ -1734,6 +1794,173 @@ def train_switcher(
             ),
         }
         write_run_summary(output_dir, failure_summary)
+        raise
+
+
+def run_full_training(
+    *,
+    routerset_dir: Union[str, Path],
+    output_dir: Union[str, Path],
+    manifest_path: Optional[Union[str, Path]] = None,
+    expert_names: Optional[Sequence[str]] = None,
+    weights_dir: Optional[str] = None,
+    training: str = "finetuning",
+    n_shots: int = 5000,
+    batch_size: int = 4,
+    num_workers: int = 0,
+    max_epochs: int = 20,
+    learning_rate: float = 1e-3,
+    weight_decay: float = 1e-4,
+    threshold: float = 0.5,
+    top_k: Optional[int] = None,
+    target_size: int = DEFAULT_ROUTERSET_TARGET_SIZE,
+    target_channels: int = 8,
+    seed: int = 42,
+    release_name: Optional[str] = None,
+    release_root: Union[str, Path] = DEFAULT_RELEASE_ROOT,
+    rebuild_splits: bool = False,
+    rebuilt_manifest_out: Optional[Union[str, Path]] = None,
+    balanced_sampling: bool = True,
+    runtime_root: Optional[Union[str, Path]] = None,
+    accelerator: str = "cpu",
+    devices: Union[str, int, Sequence[int]] = 1,
+    precision: Optional[str] = None,
+    run_startup_gate: bool = True,
+    startup_timeout_seconds: int = DEFAULT_STARTUP_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    output_dir = ensure_dir(output_dir)
+    inference_dir = output_dir / "inference"
+    smoke_summary_path = output_dir / "smoke_test_summary.json"
+    training_summary: Optional[dict[str, Any]] = None
+    active_manifest_path = manifest_path
+    expert_list = list(expert_names or DEFAULT_ROUTERSET_EXPERTS)
+
+    try:
+        training_summary = train_switcher(
+            routerset_dir=routerset_dir,
+            output_dir=output_dir,
+            manifest_path=manifest_path,
+            expert_names=expert_list,
+            weights_dir=weights_dir,
+            training=training,
+            n_shots=n_shots,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            max_epochs=max_epochs,
+            learning_rate=learning_rate,
+            weight_decay=weight_decay,
+            threshold=threshold,
+            top_k=top_k,
+            target_size=target_size,
+            target_channels=target_channels,
+            seed=seed,
+            release_name=release_name,
+            release_root=release_root,
+            rebuild_splits=rebuild_splits,
+            rebuilt_manifest_out=rebuilt_manifest_out,
+            balanced_sampling=balanced_sampling,
+            runtime_root=runtime_root,
+            accelerator=accelerator,
+            devices=devices,
+            precision=precision,
+            run_startup_gate=run_startup_gate,
+            startup_timeout_seconds=startup_timeout_seconds,
+        )
+        active_manifest_path = training_summary["manifest_path"]
+
+        inference_report = run_exported_moe_inference(
+            routerset_dir=routerset_dir,
+            manifest_path=active_manifest_path,
+            output_dir=inference_dir,
+            bundle_path=training_summary["bundle_path"],
+            expert_names=expert_list,
+            batch_size=batch_size,
+            num_workers=num_workers,
+            target_size=target_size,
+            target_channels=target_channels,
+            balanced_sampling=balanced_sampling,
+        )
+
+        smoke_summary = {
+            "status": "completed",
+            "failure_stage": None,
+            "preflight_report_path": training_summary["preflight_report_path"],
+            "runtime_environment_path": training_summary["runtime_environment_path"],
+            "manifest_path": active_manifest_path,
+            "training_summary_path": str(output_dir / "summary.json"),
+            "bundle_path": training_summary["bundle_path"],
+            "inference_summary_path": inference_report["summary_path"],
+            "inference_prediction_path": inference_report["prediction_path"],
+            "release_dir": training_summary["release_dir"],
+        }
+        save_json(smoke_summary_path, smoke_summary)
+
+        full_summary = dict(training_summary)
+        full_summary.update(
+            {
+                "status": "completed",
+                "failure_stage": None,
+                "smoke_test_summary_path": str(smoke_summary_path),
+                "inference_summary_path": inference_report["summary_path"],
+                "inference_prediction_path": inference_report["prediction_path"],
+                "contract": build_run_contract(
+                    output_dir=output_dir,
+                    completed_stages=FULL_TRAINING_STAGES,
+                    release_dir=training_summary["release_dir"],
+                ),
+            }
+        )
+        write_run_summary(output_dir, full_summary)
+        return full_summary
+    except BaseException as error:
+        existing_summary: dict[str, Any] = {}
+        summary_path = output_dir / "summary.json"
+        if summary_path.exists():
+            existing_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+        failure_stage = (
+            "smoke"
+            if training_summary is not None
+            else existing_summary.get("failure_stage") or existing_summary.get("startup_stage") or "startup_failed"
+        )
+        failure_payload = {
+            "status": "failed",
+            "failure_stage": failure_stage,
+            "training_summary_path": str(summary_path) if summary_path.exists() else "",
+            "startup_stage_path": existing_summary.get("startup_stage_path", ""),
+            "startup_log_path": existing_summary.get("startup_log_path", ""),
+            "manifest_path": active_manifest_path or existing_summary.get("manifest_path", ""),
+            "bundle_path": training_summary["bundle_path"] if training_summary else existing_summary.get("bundle_path", ""),
+            "runtime_environment_path": existing_summary.get("runtime_environment_path", ""),
+            "preflight_report_path": existing_summary.get("preflight_report_path", ""),
+            "inference_summary_path": str(inference_dir / "summary.json") if (inference_dir / "summary.json").exists() else "",
+            "inference_prediction_path": str(inference_dir / "routing_predictions.jsonl")
+            if (inference_dir / "routing_predictions.jsonl").exists()
+            else "",
+            "error_type": type(error).__name__,
+            "error": str(error),
+        }
+        save_json(smoke_summary_path, failure_payload)
+
+        if training_summary is not None:
+            failed_summary = dict(training_summary)
+            failed_summary.update(
+                {
+                    "status": "failed",
+                    "failure_stage": "smoke",
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                    "smoke_test_summary_path": str(smoke_summary_path),
+                    "inference_summary_path": failure_payload["inference_summary_path"],
+                    "inference_prediction_path": failure_payload["inference_prediction_path"],
+                    "contract": build_run_contract(
+                        output_dir=output_dir,
+                        completed_stages=("preflight", "startup_gate", "training", "export"),
+                        release_dir=training_summary["release_dir"],
+                    ),
+                }
+            )
+            write_run_summary(output_dir, failed_summary)
         raise
 
 
@@ -1822,10 +2049,11 @@ def run_moe_smoke_test(
             startup_timeout_seconds=startup_timeout_seconds,
         )
 
-        model = load_student_moe_bundle(training_summary["bundle_path"])
-        datamodule = RoutersetMoEDataModule(
-            routerset_dir,
+        inference_report = run_exported_moe_inference(
+            routerset_dir=routerset_dir,
             manifest_path=preflight["manifest_path"],
+            output_dir=inference_dir,
+            bundle_path=training_summary["bundle_path"],
             expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
             batch_size=batch_size,
             num_workers=num_workers,
@@ -1833,20 +2061,6 @@ def run_moe_smoke_test(
             target_channels=target_channels,
             balanced_sampling=balanced_sampling,
         )
-        datamodule.setup("validate")
-        prediction_path = write_routing_predictions(
-            model,
-            datamodule.val_dataloader(),
-            inference_dir / "routing_predictions.jsonl",
-        )
-        inference_summary = {
-            "status": "completed",
-            "bundle_path": training_summary["bundle_path"],
-            "prediction_path": str(prediction_path),
-            "manifest_path": preflight["manifest_path"],
-            "release_dir": training_summary["release_dir"],
-        }
-        save_json(inference_dir / "summary.json", inference_summary)
 
         smoke_summary = {
             "status": "completed",
@@ -1855,8 +2069,8 @@ def run_moe_smoke_test(
             "rebuilt_manifest_path": preflight["manifest_path"],
             "training_summary_path": str(Path(output_dir) / "summary.json"),
             "bundle_path": training_summary["bundle_path"],
-            "inference_summary_path": str(inference_dir / "summary.json"),
-            "inference_prediction_path": str(prediction_path),
+            "inference_summary_path": inference_report["summary_path"],
+            "inference_prediction_path": inference_report["prediction_path"],
             "release_dir": training_summary["release_dir"],
         }
         save_json(smoke_summary_path, smoke_summary)

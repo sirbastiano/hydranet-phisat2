@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-03-14 12:00:43 | run=20260314-115146-3579918 | iter=1 | mode=build | story=US-001 | duration=537s | status=success
 
 ## Events
 
@@ -9,3 +10,7 @@
 [2026-03-14 11:55:52] Implemented US-001 contract payload and docs; running targeted regression tests
 [2026-03-14 11:59:10] Verification complete for US-001: pytest passed; ruff failed on existing repo issues; make gates stalled at bootstrap and were terminated
 [2026-03-14 12:00:17] Updated US-001 progress log with commit and verification details
+[2026-03-14 12:00:43] ITERATION 1 end (duration=537s)
+[2026-03-14 12:00:45] ITERATION 2 start (mode=build story=US-002)
+[2026-03-14 12:04:29] Implemented US-002 full-training orchestration, CLI/Make entrypoint, contract fix, docs, and regression tests
+[2026-03-14 12:09:43] US-002 verification: targeted tests and repo pytest passed; full_train CLI usage verified; ruff has pre-existing unrelated failures; train-prepare timed out in existing Lightning import probe; smoketest reached trainer.fit before termination due runtime

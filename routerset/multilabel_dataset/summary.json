@@ -1,0 +1,150 @@
+{
+  "build_mode": "balanced multi-source raw extraction with combo-capped fire, burned_area, anomaly_detection, tiled worldfloods records, and native lc/roads n-shot archive records",
+  "seed": 42,
+  "datasets_included": [
+    "fire",
+    "burned_area",
+    "anomaly_detection",
+    "worldfloods",
+    "lc",
+    "roads"
+  ],
+  "datasets_unavailable": {
+    "building": "local phileo-bench_building.zarr is absent and the published downstream_datasets_nshot.zip archive does not contain building labels"
+  },
+  "num_records": 15512,
+  "missing_sample_ids": [
+    "fire:train:0003327",
+    "fire:train:0003362",
+    "fire:train:0003339",
+    "fire:train:0003328",
+    "fire:train:0003369",
+    "fire:train:0003334",
+    "fire:train:0003366",
+    "fire:train:0003358",
+    "fire:train:0003364",
+    "fire:train:0003343",
+    "fire:train:0003338",
+    "fire:train:0003355",
+    "fire:train:0003363",
+    "fire:train:0003348",
+    "fire:train:0003352",
+    "fire:train:0003346",
+    "fire:train:0003340",
+    "fire:train:0003360",
+    "fire:train:0003357",
+    "fire:train:0003351",
+    "fire:train:0003356",
+    "fire:train:0003337",
+    "fire:train:0003354",
+    "fire:train:0003342",
+    "fire:train:0003345",
+    "fire:train:0003330",
+    "fire:train:0003370",
+    "fire:train:0003368",
+    "fire:train:0003335",
+    "fire:train:0003365",
+    "fire:train:0003329"
+  ],
+  "per_dataset_split": {
+    "fire": {
+      "train": 1586,
+      "validation": 14
+    },
+    "burned_area": {
+      "train": 5149,
+      "validation": 1511
+    },
+    "anomaly_detection": {
+      "train": 25,
+      "validation": 11
+    },
+    "worldfloods": {
+      "train": 1870,
+      "validation": 483
+    },
+    "lc": {
+      "train": 52,
+      "validation": 11
+    },
+    "roads": {
+      "train": 4000,
+      "validation": 800
+    }
+  },
+  "per_label": {
+    "active_fire": 279,
+    "bare_sparse_vegetation": 2,
+    "built_up": 7,
+    "burned_area": 2087,
+    "cloud": 4159,
+    "cropland": 5,
+    "grassland": 35,
+    "herbaceous_wetland": 3,
+    "land": 1448,
+    "mangroves": 4,
+    "marine_algae": 3,
+    "marine_oil": 3,
+    "marine_sediments": 5,
+    "permanent_water": 15,
+    "road_present": 2702,
+    "shrubland": 10,
+    "tree_cover": 50,
+    "turbid_water": 11,
+    "water": 1710
+  },
+  "per_status": {
+    "below_threshold": 2221,
+    "explicit_negative": 2777,
+    "positive": 10514
+  },
+  "sampling_note": {
+    "fire": {
+      "candidate_train_limit": 2500,
+      "candidate_validation_limit": 25,
+      "combo_caps": {
+        "<empty>": 900,
+        "active_fire": 279,
+        "burned_area": 280,
+        "water": 141
+      }
+    },
+    "burned_area": {
+      "candidate_train_limit": 1000,
+      "candidate_validation_limit": 300,
+      "patching": "eight non-overlapping 64x128 tile records per 256x256 source scene",
+      "combo_caps": {
+        "<empty>": 2000,
+        "burned_area": 2000,
+        "cloud": 2000,
+        "water": 1200,
+        "cloud,water": 17
+      }
+    },
+    "anomaly_detection": "all checked-in train and validation ids",
+    "worldfloods": {
+      "candidate_train_limit": 1000,
+      "candidate_validation_limit": 250,
+      "patching": "four non-overlapping 256x256 tile records per 512x512 source scene",
+      "combo_caps": {
+        "cloud,land": 900,
+        "cloud": 650,
+        "cloud,land,water": 350,
+        "cloud,water": 250,
+        "land": 120,
+        "land,water": 60,
+        "water": 40
+      }
+    },
+    "lc": {
+      "source_archive": "/shared/home/rdelprete/PythonProjects/phi2FM/downloads_data/phileo_nshot/downstream_datasets_nshot.zip",
+      "source_subset": "52_shot_lc",
+      "selection": "all native records from the published n-shot subset"
+    },
+    "roads": {
+      "source_archive": "/shared/home/rdelprete/PythonProjects/phi2FM/downloads_data/phileo_nshot/downstream_datasets_nshot.zip",
+      "source_subset": "500_shot_roads",
+      "selection": "all native records from the published n-shot subset"
+    }
+  }
+}

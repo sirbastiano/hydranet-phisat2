@@ -1,0 +1,71 @@
+{
+  "num_records": 15512,
+  "datasets_included": [
+    "fire",
+    "burned_area",
+    "anomaly_detection",
+    "worldfloods",
+    "lc",
+    "roads"
+  ],
+  "dataset_totals": {
+    "fire": 1600,
+    "burned_area": 6660,
+    "anomaly_detection": 36,
+    "worldfloods": 2353,
+    "lc": 63,
+    "roads": 4800
+  },
+  "status_counts": {
+    "below_threshold": 2221,
+    "explicit_negative": 2777,
+    "positive": 10514
+  },
+  "top_labels": [
+    [
+      "cloud",
+      4159
+    ],
+    [
+      "road_present",
+      2702
+    ],
+    [
+      "burned_area",
+      2087
+    ],
+    [
+      "water",
+      1710
+    ],
+    [
+      "land",
+      1448
+    ],
+    [
+      "active_fire",
+      279
+    ],
+    [
+      "tree_cover",
+      50
+    ],
+    [
+      "grassland",
+      35
+    ],
+    [
+      "permanent_water",
+      15
+    ],
+    [
+      "turbid_water",
+      11
+    ]
+  ],
+  "label_cardinality": {
+    "min": 0,
+    "max": 5,
+    "mean": 0.8083
+  }
+}

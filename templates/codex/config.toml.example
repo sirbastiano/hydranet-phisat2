@@ -1,0 +1,31 @@
+# .codex/config.toml.example
+# Copy the parts that fit your environment.
+
+# Read more of each AGENTS file before truncation becomes a problem.
+project_doc_max_bytes = 65536
+
+# Treat alternate instruction file names as project guidance when needed.
+project_doc_fallback_filenames = ["TEAM_GUIDE.md", ".agents.md"]
+
+# Keep default responses compact in interactive coding sessions.
+model_verbosity = "low"
+
+# Reduce noisy reasoning events in CI or terminal logs if desired.
+hide_agent_reasoning = true
+
+# Optional named profiles.
+[profiles.lightweight]
+model = "gpt-4.1"
+approval_policy = "on-request"
+
+[profiles.deep-review]
+model = "gpt-5.4"
+model_reasoning_effort = "medium"
+model_verbosity = "low"
+approval_policy = "on-request"
+
+# Start from a trimmed environment and opt variables in deliberately.
+[shell_environment_policy]
+inherit = "core"
+include_only = ["PATH", "HOME", "LANG", "LC_ALL", "TERM"]
+exclude = ["*_TOKEN", "*_SECRET", "*_KEY", "AWS_*", "AZURE_*"]

@@ -3,10 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import torch
 
-from hydranet import load_student_moe_bundle, save_student_moe_bundle
+from hydranet import PhiSatNetDownstream, load_student_moe_bundle, save_student_moe_bundle
 from hydranet.models.moe_student import build_moe_student_from_models
 from hydranet.models.student import create_phisatnet
 
@@ -75,6 +76,75 @@ class TestMoEStudent(unittest.TestCase):
 
         self.assertEqual(len(outputs["active_experts"][0]), 1)
         self.assertEqual(sorted(outputs["expert_outputs"]), outputs["active_experts"][0])
+
+    def test_load_student_moe_bundle_uses_safe_torch_load(self) -> None:
+        torch.manual_seed(2)
+        models = {
+            "anomaly_detection": create_phisatnet("checkpoint", n_classes=1),
+            "fire": create_phisatnet("checkpoint", n_classes=2),
+        }
+        model = build_moe_student_from_models(models, threshold=0.3, top_k=1)
+        bundle_path = Path("/tmp/unused.pt")
+
+        payload = {
+            "bundle_type": "hydranet_student_moe",
+            "bundle_version": 1,
+            "model_config": model.get_bundle_config(),
+            "state_dict": model.state_dict(),
+            "metadata": {},
+        }
+
+        with patch("torch.load") as mocked_load:
+            mocked_load.return_value = payload
+            restored = load_student_moe_bundle(bundle_path)
+
+        mocked_load.assert_called_once_with(bundle_path, map_location="cpu", weights_only=True)
+        self.assertEqual(type(restored).__name__, "MoEStudent")
+
+    def test_load_student_moe_bundle_requires_known_keys(self) -> None:
+        malformed_bundle = {"bundle_type": "hydranet_student_moe"}
+        with patch("torch.load") as mocked_load:
+            mocked_load.return_value = malformed_bundle
+            with self.assertRaisesRegex(ValueError, "Missing keys"):
+                load_student_moe_bundle(Path("/tmp/unused.pt"))
+
+    def test_load_teacher_pretrained_uses_safe_torch_load(self) -> None:
+        torch.manual_seed(3)
+        source = PhiSatNetDownstream(
+            pretrained_path=None,
+            task="classification",
+            input_dim=3,
+            output_dim=4,
+            depths=[2, 2, 2, 2],
+            dims=[16, 32, 64, 128],
+            img_size=224,
+            freeze_body=False,
+        )
+
+        checkpoint_state = {}
+        for key, value in source.stem.state_dict().items():
+            checkpoint_state[f"module.stem.{key}"] = value
+        for key, value in source.encoder.state_dict().items():
+            checkpoint_state[f"module.encoder.{key}"] = value
+
+        with patch("hydranet.models.teacher.torch.load") as mocked_load:
+            mocked_load.return_value = {"state_dict": checkpoint_state}
+            loaded = PhiSatNetDownstream(
+                pretrained_path=Path("/tmp/unused.pt"),
+                task="classification",
+                input_dim=3,
+                output_dim=4,
+                depths=[2, 2, 2, 2],
+                dims=[16, 32, 64, 128],
+                img_size=224,
+                freeze_body=False,
+            )
+
+        mocked_load.assert_called_once_with(Path("/tmp/unused.pt"), map_location="cpu", weights_only=True)
+        for key, value in source.stem.state_dict().items():
+            self.assertTrue(torch.equal(value, loaded.stem.state_dict()[key]))
+        for key, value in source.encoder.state_dict().items():
+            self.assertTrue(torch.equal(value, loaded.encoder.state_dict()[key]))
 
 
 if __name__ == "__main__":

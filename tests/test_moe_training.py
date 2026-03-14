@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,6 +26,7 @@ from hydranet.moe_training import (
     probe_lightning_import,
     rebuild_routerset_split_manifest,
     resolve_routerset_dataset_root,
+    run_full_training,
     run_training_startup_gate,
     train_switcher,
     run_moe_smoke_test,
@@ -471,6 +473,114 @@ class TestMoETraining(unittest.TestCase):
             self.assertEqual(summary["startup_log_path"], str(output_dir / "startup_log.txt"))
             self.assertEqual(summary["startup_stage_path"], str(output_dir / "startup_stage.json"))
 
+    def test_train_switcher_skip_startup_gate_writes_skipped_gate_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+            release_dir = root / "release" / "phidranet_demo"
+
+            class FakeLightningModule:
+                def __init__(self, model, *, learning_rate: float, weight_decay: float) -> None:
+                    self.model = model
+                    self.learning_rate = learning_rate
+                    self.weight_decay = weight_decay
+
+            class FakeTrainer:
+                callback_metrics = {"val_loss": 0.25}
+
+                def fit(self, lightning_module, train_dataloaders=None, val_dataloaders=None) -> None:
+                    _ = (lightning_module, train_dataloaders, val_dataloaders)
+
+            class FakeModel:
+                encoder_source_task = "fire"
+
+            def _fake_capture_baseline_summary(model, output_dir) -> Path:
+                _ = model
+                path = Path(output_dir) / "baseline_summary.json"
+                path.write_text("{}", encoding="utf-8")
+                return path
+
+            def _fake_save_bundle(model, output_path, metadata=None) -> Path:
+                _ = (model, metadata)
+                path = Path(output_path)
+                path.write_bytes(b"bundle")
+                return path
+
+            def _fake_write_predictions(model, dataloader, output_path) -> Path:
+                _ = (model, dataloader)
+                path = Path(output_path)
+                path.write_text("{}\n", encoding="utf-8")
+                return path
+
+            def _fake_create_release(**kwargs):
+                _ = kwargs
+                release_dir.mkdir(parents=True, exist_ok=True)
+                for filename in [
+                    "student_moe_bundle.pt",
+                    "config.json",
+                    "metrics.json",
+                    "baseline_summary.json",
+                    "routing_predictions.jsonl",
+                    "dataset_report.json",
+                    "checkpoint_report.json",
+                    "release_manifest.json",
+                    "DEPLOY.md",
+                ]:
+                    (release_dir / filename).write_text("{}", encoding="utf-8")
+                return {
+                    "release_dir": str(release_dir),
+                    "bundle_path": str(release_dir / "student_moe_bundle.pt"),
+                    "config_path": str(release_dir / "config.json"),
+                    "metrics_path": str(release_dir / "metrics.json"),
+                    "baseline_summary_path": str(release_dir / "baseline_summary.json"),
+                    "routing_predictions_path": str(release_dir / "routing_predictions.jsonl"),
+                    "dataset_report_path": str(release_dir / "dataset_report.json"),
+                    "checkpoint_report_path": str(release_dir / "checkpoint_report.json"),
+                    "release_manifest_path": str(release_dir / "release_manifest.json"),
+                    "deployment_path": str(release_dir / "DEPLOY.md"),
+                }
+
+            with patch(
+                "hydranet.moe_training.resolve_student_checkpoint_report",
+                return_value={"fire": {"checkpoint_path": "dummy.pt", "training": "finetuning", "n_shots": 5000}},
+            ), patch("hydranet.moe_training.probe_lightning_import", return_value=None) as probe_mock, patch(
+                "hydranet.moe_training.build_routerset_moe",
+                return_value=FakeModel(),
+            ), patch(
+                "hydranet.moe_training.capture_baseline_summary",
+                side_effect=_fake_capture_baseline_summary,
+            ), patch(
+                "hydranet.moe_training.save_student_moe_bundle",
+                side_effect=_fake_save_bundle,
+            ), patch(
+                "hydranet.moe_training.write_routing_predictions",
+                side_effect=_fake_write_predictions,
+            ), patch(
+                "hydranet.moe_training.create_phidranet_release",
+                side_effect=_fake_create_release,
+            ), patch(
+                "hydranet.moe_training.load_lightning_training_components",
+                return_value=(FakeLightningModule, lambda *args, **kwargs: FakeTrainer(), lambda *args, **kwargs: None),
+            ):
+                summary = train_switcher(
+                    routerset_dir=root,
+                    output_dir=output_dir,
+                    expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                    runtime_root=root / "runtime",
+                    target_size=16,
+                    target_channels=8,
+                    release_name="demo",
+                    run_startup_gate=False,
+                    max_epochs=1,
+                )
+
+            gate_report = json.loads((output_dir / "startup_gate.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["status"], "completed")
+            self.assertEqual(gate_report["status"], "skipped")
+            self.assertEqual(gate_report["lightning_probe"]["status"], "skipped")
+            self.assertEqual(probe_mock.call_count, 1)
+
     def test_train_switcher_missing_manifest_fails_before_long_running_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -573,6 +683,175 @@ class TestMoETraining(unittest.TestCase):
             summary = json.loads((smoke_dir / "smoke_test_summary.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["status"], "failed")
             self.assertEqual(summary["error_type"], "TimeoutError")
+
+    def test_run_full_training_marks_smoke_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+            release_dir = root / "release" / "phidranet_demo"
+            summary_path = output_dir / "summary.json"
+
+            def _fake_train_switcher(**kwargs):
+                _ = kwargs
+                output_dir.mkdir(parents=True, exist_ok=True)
+                summary = {
+                    "status": "completed",
+                    "startup_stage": "fit_completed",
+                    "failure_stage": None,
+                    "routerset_dir": str(root),
+                    "dataset_root": str(resolve_routerset_dataset_root(root)),
+                    "manifest_path": str(default_rebuilt_manifest_path(root)),
+                    "runtime_root": str(root / "runtime"),
+                    "runtime_environment_path": str(output_dir / "runtime_environment.json"),
+                    "preflight_report_path": str(output_dir / "preflight_report.json"),
+                    "bundle_path": str(output_dir / "student_moe_bundle.pt"),
+                    "metrics_path": str(output_dir / "metrics.json"),
+                    "prediction_path": str(output_dir / "routing_predictions.jsonl"),
+                    "config_path": str(output_dir / "config.json"),
+                    "dataset_report_path": str(output_dir / "dataset_report.json"),
+                    "checkpoint_report_path": str(output_dir / "checkpoint_report.json"),
+                    "startup_log_path": str(output_dir / "startup_log.txt"),
+                    "startup_stage_path": str(output_dir / "startup_stage.json"),
+                    "startup_gate_path": str(output_dir / "startup_gate.json"),
+                    "release_dir": str(release_dir),
+                    "release_manifest_path": str(release_dir / "release_manifest.json"),
+                    "contract": {"completed_stages": ["preflight", "startup_gate", "training", "export"]},
+                }
+                for path in [
+                    output_dir / "runtime_environment.json",
+                    output_dir / "preflight_report.json",
+                    output_dir / "config.json",
+                    output_dir / "dataset_report.json",
+                    output_dir / "checkpoint_report.json",
+                    output_dir / "metrics.json",
+                    output_dir / "startup_log.txt",
+                    output_dir / "startup_stage.json",
+                    output_dir / "startup_gate.json",
+                    output_dir / "routing_predictions.jsonl",
+                    output_dir / "student_moe_bundle.pt",
+                ]:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if path.suffix == ".pt":
+                        path.write_bytes(b"bundle")
+                    else:
+                        path.write_text("{}", encoding="utf-8")
+                release_dir.mkdir(parents=True, exist_ok=True)
+                (release_dir / "release_manifest.json").write_text("{}", encoding="utf-8")
+                summary_path.write_text(json.dumps(summary), encoding="utf-8")
+                return summary
+
+            with patch("hydranet.moe_training.train_switcher", side_effect=_fake_train_switcher), patch(
+                "hydranet.moe_training.run_exported_moe_inference",
+                return_value={
+                    "summary_path": str(output_dir / "inference" / "summary.json"),
+                    "prediction_path": str(output_dir / "inference" / "routing_predictions.jsonl"),
+                },
+            ):
+                summary = run_full_training(
+                    routerset_dir=root,
+                    output_dir=output_dir,
+                    release_name="demo",
+                )
+
+            self.assertEqual(summary["status"], "completed")
+            self.assertEqual(summary["contract"]["completed_stages"], list(FULL_TRAINING_STAGES))
+            self.assertIsNone(summary["contract"]["next_stage"])
+            self.assertEqual(summary["smoke_test_summary_path"], str(output_dir / "smoke_test_summary.json"))
+            self.assertTrue((output_dir / "smoke_test_summary.json").exists())
+            written = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(written["contract"]["completed_stages"], list(FULL_TRAINING_STAGES))
+
+    def test_run_full_training_records_smoke_failure_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+            release_dir = root / "release" / "phidranet_demo"
+            summary_path = output_dir / "summary.json"
+
+            def _fake_train_switcher(**kwargs):
+                _ = kwargs
+                output_dir.mkdir(parents=True, exist_ok=True)
+                summary = {
+                    "status": "completed",
+                    "startup_stage": "fit_completed",
+                    "failure_stage": None,
+                    "routerset_dir": str(root),
+                    "dataset_root": str(resolve_routerset_dataset_root(root)),
+                    "manifest_path": str(default_rebuilt_manifest_path(root)),
+                    "runtime_root": str(root / "runtime"),
+                    "runtime_environment_path": str(output_dir / "runtime_environment.json"),
+                    "preflight_report_path": str(output_dir / "preflight_report.json"),
+                    "bundle_path": str(output_dir / "student_moe_bundle.pt"),
+                    "metrics_path": str(output_dir / "metrics.json"),
+                    "prediction_path": str(output_dir / "routing_predictions.jsonl"),
+                    "config_path": str(output_dir / "config.json"),
+                    "dataset_report_path": str(output_dir / "dataset_report.json"),
+                    "checkpoint_report_path": str(output_dir / "checkpoint_report.json"),
+                    "startup_log_path": str(output_dir / "startup_log.txt"),
+                    "startup_stage_path": str(output_dir / "startup_stage.json"),
+                    "startup_gate_path": str(output_dir / "startup_gate.json"),
+                    "release_dir": str(release_dir),
+                    "release_manifest_path": str(release_dir / "release_manifest.json"),
+                    "contract": {"completed_stages": ["preflight", "startup_gate", "training", "export"]},
+                }
+                for path in [
+                    output_dir / "runtime_environment.json",
+                    output_dir / "preflight_report.json",
+                    output_dir / "config.json",
+                    output_dir / "dataset_report.json",
+                    output_dir / "checkpoint_report.json",
+                    output_dir / "metrics.json",
+                    output_dir / "startup_log.txt",
+                    output_dir / "startup_stage.json",
+                    output_dir / "startup_gate.json",
+                    output_dir / "student_moe_bundle.pt",
+                ]:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    if path.suffix == ".pt":
+                        path.write_bytes(b"bundle")
+                    else:
+                        path.write_text("{}", encoding="utf-8")
+                release_dir.mkdir(parents=True, exist_ok=True)
+                (release_dir / "release_manifest.json").write_text("{}", encoding="utf-8")
+                summary_path.write_text(json.dumps(summary), encoding="utf-8")
+                return summary
+
+            with patch("hydranet.moe_training.train_switcher", side_effect=_fake_train_switcher), patch(
+                "hydranet.moe_training.run_exported_moe_inference",
+                side_effect=RuntimeError("smoke inference exploded"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "smoke inference exploded"):
+                    run_full_training(
+                        routerset_dir=root,
+                        output_dir=output_dir,
+                        release_name="demo",
+                    )
+
+            written = json.loads(summary_path.read_text(encoding="utf-8"))
+            smoke_summary = json.loads((output_dir / "smoke_test_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(written["status"], "failed")
+            self.assertEqual(written["failure_stage"], "smoke")
+            self.assertEqual(smoke_summary["failure_stage"], "smoke")
+            self.assertEqual(smoke_summary["error_type"], "RuntimeError")
+
+    def test_full_train_cli_requires_output_dir_and_release_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            script_path = Path(__file__).resolve().parents[1] / "scripts" / "full_train_moe.py"
+            result = subprocess.run(
+                [sys.executable, str(script_path)],
+                cwd=root,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("--output-dir", result.stderr)
+            self.assertIn("--release-name", result.stderr)
+            self.assertEqual(list(root.iterdir()), [])
 
     def test_lazy_lightning_proxy_uses_loader(self) -> None:
         models = {name: create_phisatnet("checkpoint", n_classes=1) for name in DEFAULT_ROUTERSET_EXPERTS}

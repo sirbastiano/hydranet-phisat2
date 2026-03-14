@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Mapping, Optional, Sequence
+from typing import Mapping, Optional, Sequence, Union
 
 from .models.student import (
     DEFAULT_STUDENT_CONFIG,
@@ -225,6 +225,24 @@ def _load_student_catalog_rows() -> list[dict[str, str]]:
         return [row for row in reader if row["model"] == "student" and row.get("task")]
 
 
+def _resolve_student_checkpoint_path(
+    *,
+    task: str,
+    training: str,
+    n_shots: int,
+    weights_dir: Optional[str] = None,
+) -> Optional[str]:
+    weight_paths = get_model_weights(
+        training=training,
+        model="student",
+        task=task,
+        n_shots=n_shots,
+        download_dir=weights_dir,
+        latest_only=True,
+    )
+    return weight_paths[0] if weight_paths else None
+
+
 def _resolve_default_moe_experts(
     *,
     allowed_tasks: Optional[Sequence[str]] = None,
@@ -249,7 +267,14 @@ def _resolve_default_moe_experts(
 def load_student_moe(
     *,
     expert_tasks: Optional[Sequence[str]] = None,
-    allowed_default_tasks: Sequence[str] = ("anomaly_detection", "fire", "worldfloods"),
+    allowed_default_tasks: Sequence[str] = (
+        "anomaly_detection",
+        "burned_area",
+        "fire",
+        "lc",
+        "roads",
+        "worldfloods",
+    ),
     encoder_source_task: Optional[str] = None,
     preset: str = "checkpoint",
     training: str = "finetuning",
@@ -279,15 +304,12 @@ def load_student_moe(
     for task in selected_tasks:
         checkpoint_path = None
         if auto_load_weights:
-            weight_paths = get_model_weights(
-                training=training,
-                model="student",
+            checkpoint_path = _resolve_student_checkpoint_path(
                 task=task,
+                training=training,
                 n_shots=n_shots,
-                download_dir=weights_dir,
-                latest_only=True,
+                weights_dir=weights_dir,
             )
-            checkpoint_path = weight_paths[0] if weight_paths else None
         model = load_student(
             preset=preset,
             task=task,
@@ -332,7 +354,7 @@ def load_student_moe(
 
 def save_student_moe_bundle(
     model: MoEStudent,
-    path: str | Path,
+    path: Union[str, Path],
     *,
     metadata: Optional[Mapping[str, object]] = None,
 ) -> Path:
@@ -352,11 +374,21 @@ def save_student_moe_bundle(
     return bundle_path
 
 
-def load_student_moe_bundle(path: str | Path, *, map_location: str = "cpu") -> MoEStudent:
+def load_student_moe_bundle(path: Union[str, Path], *, map_location: str = "cpu") -> MoEStudent:
     """Load a MoE student from a bundle saved by `save_student_moe_bundle`."""
     import torch
+    from collections.abc import Mapping
 
-    bundle = torch.load(path, map_location=map_location, weights_only=False)
+    bundle = torch.load(path, map_location=map_location, weights_only=True)
+    if not isinstance(bundle, Mapping):
+        raise TypeError(f"Invalid bundle payload at '{path}'. Expected a mapping, got {type(bundle).__name__}.")
+
+    required_keys = {"bundle_type", "bundle_version", "model_config", "state_dict"}
+    missing_keys = required_keys.difference(bundle.keys())
+    if missing_keys:
+        raise ValueError(
+            f"Invalid MoE bundle '{path}'. Missing keys: {', '.join(sorted(missing_keys))}"
+        )
     if bundle.get("bundle_type") != "hydranet_student_moe":
         raise ValueError(f"Unsupported bundle type: {bundle.get('bundle_type')!r}")
 

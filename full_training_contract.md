@@ -12,6 +12,8 @@ Every full run follows these stages in order:
 4. `export`
 5. `smoke`
 
+The canonical one-shot operator entrypoint is `scripts/full_train_moe.py` or `make full-train`.
+
 Stage intent:
 
 - `preflight`: validate the manifest, canonical tensor shape contract, and checkpoint availability.
@@ -94,6 +96,8 @@ That means:
 ## Smoke Contract
 
 The `smoke` stage is executed by `scripts/smoke_test_moe.py` or `make smoketest`.
+
+For the full-training path, `scripts/full_train_moe.py` runs the smoke validation after export and rewrites `summary.json` so the canonical stage list is fully complete.
 
 Smoke-specific outputs live alongside the training run under the same `outputs/moe/<timestamp>/` root:
 
