@@ -53,3 +53,4 @@
 [2026-03-14 13:17:18] ITERATION 8 start (mode=build story=US-008)
 [2026-03-14 13:19:45] US-008 code changes applied: added mocked orchestration regression tests for stage sequencing, artifact emission, and pre-smoke failure-stage signaling.
 [2026-03-14 13:29:21] US-008 verification complete: targeted/full pytest passed; smoketest-preflight passed; train-prepare and smoketest hit the existing Lightning import timeout; repo-wide ruff remains blocked by pre-existing unrelated issues.
+[2026-03-14 13:30:47] Updated US-008 progress entry with commit hash, verification outcomes, and residual validation risk; preparing final metadata commit and clean-status check.

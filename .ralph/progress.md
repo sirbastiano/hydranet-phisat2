@@ -287,3 +287,42 @@ Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/
   - Useful context
   - The project `.venv` is required for reliable pytest execution on this machine because the host `pytest` lacks `torch`.
 ---
+
+## [2026-03-14 13:29:34 UTC] - US-008: Add regression tests for full-training orchestration
+Thread: 
+Run: 20260314-115146-3579918 (iteration 8)
+Run log: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-8.log
+Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-8.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: f648618 test(training): add orchestration regressions
+- Post-commit status: clean after final metadata commit
+- Verification:
+  - Command: PYTHONPATH=src .venv/bin/python -m pytest tests/test_moe_training.py -> PASS
+  - Command: PYTHONPATH=src .venv/bin/python -m pytest -> PASS
+  - Command: PATH="/shared/home/rdelprete/PythonProjects/hydranet-phisat2/.venv/bin:$PATH" make train-prepare PYTHON=.venv/bin/python ROUTERSET_DIR=/tmp/us008_routerset REBUILT_MANIFEST=/tmp/us008_routerset/multilabel_dataset/manifest_moe_train.jsonl TRAIN_OUTPUT_DIR=outputs/moe/us008_prepare RUNTIME_ROOT=outputs/moe/us008_prepare/runtime RELEASE_NAME=us008_prepare ACCELERATOR=cpu DEVICES=1 -> FAIL
+  - Command: PATH="/shared/home/rdelprete/PythonProjects/hydranet-phisat2/.venv/bin:$PATH" make smoketest-preflight PYTHON=.venv/bin/python ROUTERSET_DIR=/tmp/us008_routerset REBUILT_MANIFEST=/tmp/us008_routerset/multilabel_dataset/manifest_moe_train.jsonl SMOKE_OUTPUT_DIR=outputs/moe/us008_preflight RELEASE_NAME=us008_smoke ACCELERATOR=cpu DEVICES=1 -> PASS
+  - Command: PATH="/shared/home/rdelprete/PythonProjects/hydranet-phisat2/.venv/bin:$PATH" make smoketest PYTHON=.venv/bin/python ROUTERSET_DIR=/tmp/us008_routerset REBUILT_MANIFEST=/tmp/us008_routerset/multilabel_dataset/manifest_moe_train.jsonl SMOKE_OUTPUT_DIR=outputs/moe/us008_smoke_fixture RUNTIME_ROOT=outputs/moe/us008_smoke_fixture/runtime RELEASE_NAME=us008_smoke_fixture ACCELERATOR=cpu DEVICES=1 -> FAIL
+  - Command: ruff check . -> FAIL
+  - Command: ruff check tests/test_moe_training.py -> PASS
+- Files changed:
+  - .agents/tasks/prd-full-training.json
+  - .ralph/.tmp/prompt-20260314-115146-3579918-8.md
+  - .ralph/.tmp/story-20260314-115146-3579918-8.json
+  - .ralph/.tmp/story-20260314-115146-3579918-8.md
+  - .ralph/activity.log
+  - PLANS.md
+  - tests/test_moe_training.py
+  - .ralph/progress.md
+- What was implemented
+- Added a US-008 ExecPlan and two regression tests that mock the full-training orchestration without live checkpoint downloads.
+- Pinned the mocked train-switcher stage sequence and artifact emission by asserting dataset preparation occurs before the startup gate, the startup gate completes before fit starts, and the expected summary/startup/bundle artifacts are written.
+- Added a negative-path regression test proving `run_full_training(...)` preserves the training failure stage, writes `smoke_test_summary.json`, and re-raises the timeout for a non-zero CLI path before smoke begins.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - The observable pre-fit sequence in `train_switcher(...)` is dataset/config preparation -> startup gate -> checkpoint/preflight report -> fit, so regression tests should pin stage order from `startup_log.txt` instead of guessing from helper names.
+  - Gotchas encountered
+  - The canonical `make train-prepare` and `make smoketest` gates still fail in this environment because the Lightning import probe times out after 60 seconds, even with a tiny local routerset fixture and cached checkpoints.
+  - Useful context
+  - Repo-wide `ruff check .` is still blocked by pre-existing notebook and legacy-module lint issues outside US-008, while targeted Ruff on `tests/test_moe_training.py` passes.
+---
