@@ -40,6 +40,44 @@ Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/
   - `ruff check .` currently fails on pre-existing notebook and legacy module issues unrelated to US-001, and the `make` training gates stalled in bootstrap on this machine before producing stage outputs beyond `script_bootstrap`.
 ---
 
+## [2026-03-14 13:16:13 UTC] - US-007: Publish full-training runbook and command presets
+Thread: 
+Run: 20260314-115146-3579918 (iteration 7)
+Run log: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-7.log
+Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-7.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 8618d8c docs(training): publish full-train runbook
+- Post-commit status: clean
+- Verification:
+  - Command: PATH="/shared/home/rdelprete/PythonProjects/hydranet-phisat2/.venv/bin:$PATH" pytest -> PASS
+  - Command: PATH="/shared/home/rdelprete/PythonProjects/hydranet-phisat2/.venv/bin:$PATH" ruff check . -> FAIL
+  - Command: PATH="/shared/home/rdelprete/PythonProjects/hydranet-phisat2/.venv/bin:$PATH" make train-prepare PYTHON=.venv/bin/python TRAIN_OUTPUT_DIR=outputs/moe/us007_prepare RUNTIME_ROOT=outputs/moe/us007_prepare/runtime RELEASE_NAME=us007_prepare ACCELERATOR=cpu DEVICES=1 -> FAIL
+  - Command: PATH="/shared/home/rdelprete/PythonProjects/hydranet-phisat2/.venv/bin:$PATH" make smoketest-preflight PYTHON=.venv/bin/python SMOKE_OUTPUT_DIR=outputs/moe/us007_preflight RELEASE_NAME=us007_smoke -> PASS
+  - Command: PATH="/shared/home/rdelprete/PythonProjects/hydranet-phisat2/.venv/bin:$PATH" make smoketest PYTHON=.venv/bin/python ROUTERSET_DIR=/tmp/us006_routerset REBUILT_MANIFEST=/tmp/us006_routerset/multilabel_dataset/manifest_moe_train.jsonl SMOKE_OUTPUT_DIR=outputs/moe/us007_smoke_fixture RUNTIME_ROOT=outputs/moe/us007_smoke_fixture/runtime RELEASE_NAME=us007_smoke_fixture ACCELERATOR=cpu DEVICES=1 -> FAIL
+- Files changed:
+  - .agents/tasks/prd-full-training.json
+  - .ralph/.tmp/prompt-20260314-115146-3579918-7.md
+  - .ralph/.tmp/story-20260314-115146-3579918-7.json
+  - .ralph/.tmp/story-20260314-115146-3579918-7.md
+  - .ralph/activity.log
+  - PLANS.md
+  - README.md
+  - howtorun.md
+  - .ralph/progress.md
+- What was implemented
+- Updated the README and `howtorun.md` runbook so the documented full-training path now uses the real `make full-train` target, explicit micromamba environment presets, a prepare -> full-train -> smoke verification flow, and an output path map that matches the current artifact layout.
+- Added troubleshooting guidance for SIGTERM interruptions, startup timeout failures recorded in `startup_gate.json`, and NaN/Inf-loss recovery using the existing `summary.json` and `startup_log.txt` diagnostics.
+- Removed stale runbook guidance that implied there was no canonical full-training target and replaced it with the checked-in direct-script equivalent `scripts/full_train_moe.py`.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - The operator docs had drifted more in `howtorun.md` than in `README.md`; the safer update was to make `README.md` concise and let `howtorun.md` hold the full path map and troubleshooting flow.
+  - Gotchas encountered
+  - On this machine, both `make train-prepare` and `make smoketest` still hit the existing 60-second Lightning import probe timeout, so the runbook’s timeout troubleshooting is grounded in a real reproducible failure.
+  - Useful context
+  - `ruff check .` is still blocked by pre-existing notebook and legacy-module lint errors outside US-007, so repo-wide Ruff is not yet a clean release gate for documentation-only changes.
+---
+
 ## [2026-03-14 12:59:59 UTC] - US-006: Standardize artifact layout and retention policy
 Thread: 
 Run: 20260314-115146-3579918 (iteration 6)
