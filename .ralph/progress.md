@@ -118,6 +118,49 @@ Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/
   - Preflight-only runs previously wrote just `preflight_report.json`; the acceptance gap was the missing standalone dataset/checkpoint artifacts plus structured checkpoint failures.
   - Gotchas encountered
   - The repo’s default `pytest` entrypoint can bind to an environment without `torch`; the project `.venv` is required for reliable validation here.
-  - Useful context
+- Useful context
   - `make train-prepare` and `make smoketest` still fail on this machine because the existing Lightning import probe times out after checkpoint resolution, while `make smoketest-preflight` now succeeds and writes non-empty dataset/checkpoint reports.
+---
+
+## [2026-03-14 12:42:00 UTC] - US-004: Stabilize startup gate diagnostics
+Thread: 
+Run: 20260314-115146-3579918 (iteration 4)
+Run log: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-4.log
+Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-4.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 2e5006f fix(training): stabilize startup gate
+- Post-commit status: clean after metadata commit
+- Verification:
+  - Command: PYTHONPATH=src .venv/bin/pytest tests/test_moe_training.py -> PASS
+  - Command: make train-prepare -> PASS
+  - Command: make smoketest-preflight -> PASS
+  - Command: PYTHONPATH=src .venv/bin/pytest -> PASS
+  - Command: ruff check . -> FAIL
+  - Command: make smoketest -> FAIL (startup gate passed with the new timeout, then the canonical 3,857-step smoke-training epoch was interrupted after confirming fit had started because the end-to-end run was impractical in this session)
+- Files changed:
+  - PLANS.md
+  - scripts/full_train_moe.py
+  - scripts/smoke_test_moe.py
+  - scripts/train_moe_switcher.py
+  - src/hydranet/moe_training.py
+  - tests/test_moe_training.py
+  - .agents/tasks/prd-full-training.json
+  - .ralph/.tmp/prompt-20260314-115146-3579918-4.md
+  - .ralph/.tmp/story-20260314-115146-3579918-4.json
+  - .ralph/.tmp/story-20260314-115146-3579918-4.md
+  - .ralph/activity.log
+  - .ralph/progress.md
+- What was implemented
+- Expanded `startup_gate.json` so it now records a top-level `status`, `timeout_seconds`, and a failure `traceback`, while preserving nested `lightning_probe` details.
+- Updated `train_switcher(...)` to log `startup_gate_started` and `startup_gate_failed` transitions with timestamps and to surface an explicit `startup_failed` summary stage before any fit work can proceed.
+- Raised the default startup probe timeout from 20s to 60s in the library and the CLI entrypoints so the canonical `make` flows no longer fail on slow Lightning startup in this environment.
+- Added regression tests for import-probe failure diagnostics and the timeout negative case that must not reach `fit_started`.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - The startup gate is shared by prepare, train, and smoke paths, so the CLI defaults must stay aligned with `hydranet.moe_training` or the Make targets silently drift from the library contract.
+  - Gotchas encountered
+  - `make smoketest` now clears the startup gate but still runs a very long one-epoch training job on the full routerset dataset, so it is not a quick verification path on CPU.
+  - Useful context
+  - `ruff check .` is still failing on pre-existing notebook and legacy module issues outside the US-004 touch set; targeted Ruff on the changed files passed.
 ---

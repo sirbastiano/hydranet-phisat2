@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-03-14 12:24:49 | run=20260314-115146-3579918 | iter=3 | mode=build | story=US-003 | duration=619s | status=success
 - 2026-03-14 12:14:28 | run=20260314-115146-3579918 | iter=2 | mode=build | story=US-002 | duration=823s | status=success
 - 2026-03-14 12:00:43 | run=20260314-115146-3579918 | iter=1 | mode=build | story=US-001 | duration=537s | status=success
 
@@ -21,3 +22,9 @@
 [2026-03-14 12:18:24] US-003 major code changes applied: preflight now writes standalone dataset/checkpoint reports and checkpoint readiness is reported per expert before aborting
 [2026-03-14 12:23:39] US-003 verification finished: targeted/full pytest passed; smoketest-preflight passed; train-prepare and smoketest failed on existing Lightning import timeout; ruff check failed on pre-existing repo lint issues
 [2026-03-14 12:24:18] US-003 progress log updated with commit and verification results
+[2026-03-14 12:24:49] ITERATION 3 end (duration=619s)
+[2026-03-14 12:24:51] ITERATION 4 start (mode=build story=US-004)
+[2026-03-14 12:25:44] Start US-004 work: auditing startup gate diagnostics, failure-stage behavior, and test coverage.
+[2026-03-14 12:26:39] Implemented US-004 code changes: startup gate now writes explicit status/timeout/traceback diagnostics and train_switcher records startup_failed before fit.
+[2026-03-14 12:39:13] Verification for US-004: targeted tests, full pytest, train-prepare, and smoketest-preflight passed; smoketest confirmed startup gate then was interrupted during long epoch training after startup fix validation.
+[2026-03-14 12:40:17] Updated US-004 progress entry with commit and verification details; preparing metadata commit and final clean-status check.
