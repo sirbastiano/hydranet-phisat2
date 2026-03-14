@@ -14,3 +14,4 @@
 [2026-03-14 12:00:45] ITERATION 2 start (mode=build story=US-002)
 [2026-03-14 12:04:29] Implemented US-002 full-training orchestration, CLI/Make entrypoint, contract fix, docs, and regression tests
 [2026-03-14 12:09:43] US-002 verification: targeted tests and repo pytest passed; full_train CLI usage verified; ruff has pre-existing unrelated failures; train-prepare timed out in existing Lightning import probe; smoketest reached trainer.fit before termination due runtime
+[2026-03-14 12:13:56] Updated US-002 progress entry with commit and verification details
