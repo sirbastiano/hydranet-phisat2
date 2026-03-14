@@ -82,3 +82,42 @@ Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/
   - Useful context
   - `make train-prepare` still times out in the existing Lightning import probe on this machine, while `make smoketest-preflight` passes and `make smoketest` reaches real training before runtime becomes impractical.
 ---
+
+## [2026-03-14 12:23:59 UTC] - US-003: Strengthen preflight and checkpoint readiness checks
+Thread: 
+Run: 20260314-115146-3579918 (iteration 3)
+Run log: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-3.log
+Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-3.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: c0b1cfc feat(preflight): harden checkpoint readiness
+- Post-commit status: clean before recording this progress entry
+- Verification:
+  - Command: PYTHONPATH=src .venv/bin/pytest tests/test_moe_training.py -> PASS
+  - Command: make smoketest-preflight -> PASS
+  - Command: make train-prepare -> FAIL
+  - Command: make smoketest -> FAIL
+  - Command: PYTHONPATH=src .venv/bin/pytest -> PASS
+  - Command: ruff check . -> FAIL
+- Files changed:
+  - PLANS.md
+  - src/hydranet/moe_training.py
+  - tests/test_moe_training.py
+  - .agents/tasks/prd-full-training.json
+  - .ralph/.tmp/prompt-20260314-115146-3579918-3.md
+  - .ralph/.tmp/story-20260314-115146-3579918-3.json
+  - .ralph/.tmp/story-20260314-115146-3579918-3.md
+  - .ralph/activity.log
+  - .ralph/progress.md
+- What was implemented
+- Hardened dataset preflight validation so required experts must appear in both train and validation splits, not just produce valid tensor shapes.
+- Reworked checkpoint readiness reporting to record per-expert `status`, `source_path`, and deterministic path information, then validate the written report before training proceeds.
+- Updated `preflight_routerset_training(...)` to emit standalone `dataset_report.json` and `checkpoint_report.json`, and added regression coverage for successful artifact emission plus explicit missing-checkpoint failures.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - Preflight-only runs previously wrote just `preflight_report.json`; the acceptance gap was the missing standalone dataset/checkpoint artifacts plus structured checkpoint failures.
+  - Gotchas encountered
+  - The repo’s default `pytest` entrypoint can bind to an environment without `torch`; the project `.venv` is required for reliable validation here.
+  - Useful context
+  - `make train-prepare` and `make smoketest` still fail on this machine because the existing Lightning import probe times out after checkpoint resolution, while `make smoketest-preflight` now succeeds and writes non-empty dataset/checkpoint reports.
+---
