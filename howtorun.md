@@ -104,7 +104,7 @@ Expected outputs:
 
 - smoke artifacts: `outputs/moe/smoke_<utc_timestamp>/`
 - rebuilt manifest: `routerset/multilabel_dataset/manifest_moe_train.jsonl`
-- release bundle: `outputs/phidranet/phidranet_smoke_v1/`
+- release bundle: `outputs/moe/smoke_<utc_timestamp>/bundle/phidranet_smoke_v1/`
 
 ## 7. Full Training
 
@@ -132,7 +132,13 @@ PYTHONPATH=src $MICROMAMBA run -p "$MICROMAMBA_PREFIX" python scripts/train_moe_
 
 The final release bundle is written under:
 
-- `outputs/phidranet/phidranet_<release_name>/`
+- `outputs/moe/<timestamp>/bundle/phidranet_<release_name>/`
+
+Retention policy for stale failed runs:
+
+- remove old failed runs by deleting the whole `outputs/moe/<timestamp>/` directory
+- keep one recent failed run per failure mode until the underlying issue is fixed
+- if `RUNTIME_ROOT` points at shared storage, treat it as a separate cache/checkpoint area and avoid deleting it during ordinary failed-run cleanup
 
 ## 8. Direct Commands
 

@@ -123,7 +123,7 @@ For the canonical one-shot full-training path, use:
 make full-train MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX RELEASE_NAME=v1 TRAIN_OUTPUT_DIR=outputs/moe/train_v1
 ```
 
-This runs preflight, startup gate, full training/export, and post-export smoke validation in one invocation. A successful run updates `summary.json` to mark the `smoke` stage complete and writes `smoke_test_summary.json` plus `inference/` validation artifacts under the same output directory.
+This runs preflight, startup gate, full training/export, and post-export smoke validation in one invocation. A successful run updates `summary.json` to mark the `smoke` stage complete and keeps the bundle, reports, and smoke/inference artifacts under the same timestamped output directory.
 
 Then run training and final release creation:
 
@@ -162,18 +162,25 @@ If Lightning startup fails in the local environment, training now writes `startu
 
 This creates:
 
-- run artifacts under `outputs/moe/<timestamp>/`
-- a final release package under `outputs/phidranet/phidranet_v1/`
+- run artifacts, config, and reports under `outputs/moe/<timestamp>/`
+- runtime caches and downloaded checkpoints under `outputs/moe/<timestamp>/runtime/` unless `--runtime-root` overrides it
+- the final release bundle under `outputs/moe/<timestamp>/bundle/phidranet_v1/`
 
 The final bundle can be reloaded with:
 
 ```python
 from hydranet import load_student_moe_bundle
 
-model = load_student_moe_bundle("outputs/phidranet/phidranet_v1/student_moe_bundle.pt")
+model = load_student_moe_bundle("outputs/moe/<timestamp>/bundle/phidranet_v1/student_moe_bundle.pt")
 ```
 
 More detail is in `moe_works_report.md`.
+
+Cleanup policy for stale failed runs:
+
+- delete the full failed run directory under `outputs/moe/<timestamp>/`
+- keep the newest failed run for each failure mode until the issue is resolved
+- do not manually prune individual files inside a failed run; keep `summary.json`, startup diagnostics, and smoke outputs together
 
 ## Finding the Myriad-Optimized Model
 

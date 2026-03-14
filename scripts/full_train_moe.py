@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-DEFAULT_RELEASE_ROOT = "outputs/phidranet"
 DEFAULT_ROUTERSET_EXPERTS = (
     "anomaly_detection",
     "burned_area",
@@ -37,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-channels", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--release-name", required=True)
-    parser.add_argument("--release-root", default=DEFAULT_RELEASE_ROOT)
+    parser.add_argument("--release-root", default=None)
     parser.add_argument("--runtime-root", default=None)
     parser.add_argument("--accelerator", default="cpu")
     parser.add_argument("--devices", default="1")

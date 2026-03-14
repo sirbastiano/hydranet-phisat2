@@ -36,11 +36,11 @@ DEFAULT_ROUTERSET_EXPERTS = (
     "worldfloods",
 )
 DEFAULT_ROUTERSET_TARGET_SIZE = 256
-DEFAULT_RELEASE_ROOT = "outputs/phidranet"
 DEFAULT_ROUTERSET_DATASET_SUBDIR = "multilabel_dataset"
 DEFAULT_ROUTERSET_MANIFEST = "multilabel_dataset/manifest.jsonl"
 DEFAULT_STARTUP_TIMEOUT_SECONDS = 60
 DEFAULT_RUNTIME_SUBDIR = "runtime"
+DEFAULT_BUNDLE_SUBDIR = "bundle"
 FULL_TRAINING_CONTRACT_VERSION = 1
 FULL_TRAINING_STAGES = (
     "preflight",
@@ -75,6 +75,14 @@ RELEASE_ARTIFACT_FILENAMES = {
     "release_manifest": "release_manifest.json",
     "deployment_readme": "DEPLOY.md",
 }
+ARTIFACT_LAYOUT_DIRS = {
+    "runtime_root": DEFAULT_RUNTIME_SUBDIR,
+    "checkpoints": "weights",
+    "configs": ".",
+    "reports": ".",
+    "bundle_root": DEFAULT_BUNDLE_SUBDIR,
+    "inference": "inference",
+}
 
 
 def utc_timestamp() -> str:
@@ -101,22 +109,102 @@ def save_text(path: Union[str, Path], text: str) -> Path:
     return path
 
 
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def ensure_within_root(path: Union[str, Path], *, root: Union[str, Path], label: str) -> Path:
+    candidate = Path(path)
+    root_path = Path(root)
+    if not _is_relative_to(candidate, root_path):
+        raise ValueError(f"{label} must stay under {root_path}, got {candidate}.")
+    return candidate
+
+
+def resolve_release_root(
+    *,
+    output_dir: Union[str, Path],
+    release_root: Optional[Union[str, Path]] = None,
+) -> Path:
+    output_dir = Path(output_dir)
+    if release_root is None:
+        candidate = output_dir / DEFAULT_BUNDLE_SUBDIR
+    else:
+        release_root_path = Path(release_root)
+        if release_root_path.is_absolute() or _is_relative_to(release_root_path, output_dir):
+            candidate = release_root_path
+        else:
+            candidate = output_dir / release_root_path
+    ensure_within_root(candidate, root=output_dir, label="release_root")
+    return ensure_dir(candidate)
+
+
+def build_artifact_layout(
+    *,
+    output_dir: Union[str, Path],
+    runtime_root: Union[str, Path],
+    release_name: Optional[str] = None,
+    release_root: Optional[Union[str, Path]] = None,
+) -> dict[str, Any]:
+    output_dir = Path(output_dir)
+    runtime_root = Path(runtime_root)
+    ensure_within_root(runtime_root, root=runtime_root, label="runtime_root")
+    checkpoints_dir = ensure_within_root(runtime_root / ARTIFACT_LAYOUT_DIRS["checkpoints"], root=runtime_root, label="checkpoints_dir")
+    bundle_root = resolve_release_root(output_dir=output_dir, release_root=release_root)
+    layout: dict[str, Any] = {
+        "output_root": str(output_dir),
+        "runtime_root": str(runtime_root),
+        "directories": {
+            "configs_dir": str(output_dir),
+            "reports_dir": str(output_dir),
+            "runtime_root": str(runtime_root),
+            "checkpoints_dir": str(checkpoints_dir),
+            "bundle_root": str(bundle_root),
+            "inference_dir": str(output_dir / ARTIFACT_LAYOUT_DIRS["inference"]),
+        },
+        "expected_subdirs": dict(ARTIFACT_LAYOUT_DIRS),
+    }
+    if release_name is not None:
+        release_dir = ensure_within_root(bundle_root / release_name, root=output_dir, label="release_dir")
+        layout["directories"]["release_dir"] = str(release_dir)
+        layout["release_artifacts"] = {
+            name: str(release_dir / filename) for name, filename in RELEASE_ARTIFACT_FILENAMES.items()
+        }
+    layout["run_artifacts"] = {
+        name: str(output_dir / filename) for name, filename in RUN_ARTIFACT_FILENAMES.items()
+    }
+    return layout
+
+
 def build_run_contract(
     *,
     output_dir: Union[str, Path],
     completed_stages: Sequence[str],
+    runtime_root: Optional[Union[str, Path]] = None,
     release_dir: Optional[Union[str, Path]] = None,
 ) -> dict[str, Any]:
     output_dir = Path(output_dir)
     unique_completed_stages = [stage for stage in FULL_TRAINING_STAGES if stage in set(completed_stages)]
     next_stage = next((stage for stage in FULL_TRAINING_STAGES if stage not in unique_completed_stages), None)
+    resolved_runtime_root = Path(runtime_root) if runtime_root is not None else resolve_runtime_root(output_dir=output_dir)
+    artifact_layout = build_artifact_layout(
+        output_dir=output_dir,
+        runtime_root=resolved_runtime_root,
+        release_name=Path(release_dir).name if release_dir is not None else None,
+        release_root=Path(release_dir).parent if release_dir is not None else None,
+    )
     contract: dict[str, Any] = {
         "version": FULL_TRAINING_CONTRACT_VERSION,
         "canonical_stages": list(FULL_TRAINING_STAGES),
         "completed_stages": unique_completed_stages,
         "next_stage": next_stage,
         "run_dir": str(output_dir),
-        "run_artifacts": {name: str(output_dir / filename) for name, filename in RUN_ARTIFACT_FILENAMES.items()},
+        "layout": artifact_layout,
+        "run_artifacts": dict(artifact_layout["run_artifacts"]),
         "expected_artifact_names": {
             "run_dir": dict(RUN_ARTIFACT_FILENAMES),
             "release_dir": dict(RELEASE_ARTIFACT_FILENAMES),
@@ -125,9 +213,7 @@ def build_run_contract(
     if release_dir is not None:
         release_dir = Path(release_dir)
         contract["release_dir"] = str(release_dir)
-        contract["release_artifacts"] = {
-            name: str(release_dir / filename) for name, filename in RELEASE_ARTIFACT_FILENAMES.items()
-        }
+        contract["release_artifacts"] = dict(artifact_layout["release_artifacts"])
     return contract
 
 
@@ -187,8 +273,11 @@ def resolve_runtime_root(
     runtime_root: Optional[Union[str, Path]] = None,
 ) -> Path:
     if runtime_root is not None:
-        return ensure_dir(runtime_root)
-    return ensure_dir(Path(output_dir) / DEFAULT_RUNTIME_SUBDIR)
+        resolved_runtime_root = ensure_dir(runtime_root)
+    else:
+        resolved_runtime_root = ensure_dir(Path(output_dir) / DEFAULT_RUNTIME_SUBDIR)
+    ensure_within_root(resolved_runtime_root, root=resolved_runtime_root, label="runtime_root")
+    return resolved_runtime_root
 
 
 def configure_local_runtime_environment(
@@ -206,7 +295,8 @@ def configure_local_runtime_environment(
     tmp_dir = ensure_dir(resolved_runtime_root / "tmp")
     pycache_dir = ensure_dir(cache_root / "pycache")
     mplconfig_dir = ensure_dir(cache_root / "matplotlib")
-    resolved_weights_dir = ensure_dir(weights_dir or (resolved_runtime_root / "weights"))
+    resolved_weights_dir = ensure_dir(weights_dir or (resolved_runtime_root / ARTIFACT_LAYOUT_DIRS["checkpoints"]))
+    ensure_within_root(resolved_weights_dir, root=resolved_runtime_root, label="weights_dir")
 
     env_updates = {
         "HF_HOME": str(hf_home),
@@ -1539,6 +1629,7 @@ PYTHONPATH=src python3 scripts/infer_moe_switcher.py \\
 
 def create_phidranet_release(
     *,
+    output_dir: Union[str, Path],
     release_root: Union[str, Path],
     release_name: str,
     model: MoEStudent,
@@ -1549,7 +1640,8 @@ def create_phidranet_release(
     bundle_path: Union[str, Path],
     prediction_path: Union[str, Path],
 ) -> dict[str, str]:
-    release_dir = ensure_dir(Path(release_root) / release_name)
+    release_dir = ensure_within_root(Path(release_root) / release_name, root=output_dir, label="release_dir")
+    release_dir = ensure_dir(release_dir)
     final_bundle_path = Path(release_dir) / "student_moe_bundle.pt"
     if Path(bundle_path) != final_bundle_path:
         _copy_if_exists(bundle_path, final_bundle_path)
@@ -1659,7 +1751,7 @@ def train_switcher(
     seed: int = 42,
     auto_load_weights: bool = True,
     release_name: Optional[str] = None,
-    release_root: Union[str, Path] = DEFAULT_RELEASE_ROOT,
+    release_root: Optional[Union[str, Path]] = None,
     rebuild_splits: bool = False,
     rebuilt_manifest_out: Optional[Union[str, Path]] = None,
     balanced_sampling: bool = True,
@@ -1696,6 +1788,12 @@ def train_switcher(
     preflight_report_path = Path(output_dir) / "preflight_report.json"
     metrics_path = Path(output_dir) / "metrics.json"
     summary_path = Path(output_dir) / "summary.json"
+    artifact_layout = build_artifact_layout(
+        output_dir=output_dir,
+        runtime_root=runtime_report["runtime_root"],
+        release_name=release_name_value,
+        release_root=release_root,
+    )
     startup_gate_path = Path(output_dir) / "startup_gate.json"
     config: Optional[dict[str, Any]] = None
 
@@ -1891,7 +1989,8 @@ def train_switcher(
         )
 
         release_summary = create_phidranet_release(
-            release_root=release_root,
+            output_dir=output_dir,
+            release_root=artifact_layout["directories"]["bundle_root"],
             release_name=release_name_value,
             model=model,
             config=config,
@@ -1904,6 +2003,7 @@ def train_switcher(
         contract = build_run_contract(
             output_dir=output_dir,
             completed_stages=("preflight", "startup_gate", "training", "export"),
+            runtime_root=runtime_report["runtime_root"],
             release_dir=release_summary["release_dir"],
         )
         validate_run_contract_artifacts(contract, required_sections=("run_artifacts", "release_artifacts"))
@@ -1968,6 +2068,7 @@ def train_switcher(
             "contract": build_run_contract(
                 output_dir=output_dir,
                 completed_stages=completed_stages_for_failed_run(output_dir),
+                runtime_root=runtime_report["runtime_root"],
             ),
         }
         if non_finite_loss is not None:
@@ -1996,7 +2097,7 @@ def run_full_training(
     target_channels: int = 8,
     seed: int = 42,
     release_name: Optional[str] = None,
-    release_root: Union[str, Path] = DEFAULT_RELEASE_ROOT,
+    release_root: Optional[Union[str, Path]] = None,
     rebuild_splits: bool = False,
     rebuilt_manifest_out: Optional[Union[str, Path]] = None,
     balanced_sampling: bool = True,
@@ -2085,6 +2186,7 @@ def run_full_training(
                 "contract": build_run_contract(
                     output_dir=output_dir,
                     completed_stages=FULL_TRAINING_STAGES,
+                    runtime_root=training_summary["runtime_root"],
                     release_dir=training_summary["release_dir"],
                 ),
             }
@@ -2135,6 +2237,7 @@ def run_full_training(
                     "contract": build_run_contract(
                         output_dir=output_dir,
                         completed_stages=("preflight", "startup_gate", "training", "export"),
+                        runtime_root=training_summary["runtime_root"],
                         release_dir=training_summary["release_dir"],
                     ),
                 }
@@ -2161,7 +2264,7 @@ def run_moe_smoke_test(
     target_channels: int = 8,
     seed: int = 42,
     release_name: str = "smoke_v1",
-    release_root: Union[str, Path] = DEFAULT_RELEASE_ROOT,
+    release_root: Optional[Union[str, Path]] = None,
     rebuilt_manifest_out: Optional[Union[str, Path]] = None,
     balanced_sampling: bool = True,
     runtime_root: Optional[Union[str, Path]] = None,

@@ -153,3 +153,47 @@ Abort fit immediately when training or validation loss becomes non-finite, while
 ### Rollback
 - Revert the structured non-finite-loss diagnostics if they cause trainer compatibility issues.
 - The change is file-based only; failed-run artifacts can be removed by deleting the affected output directory.
+
+## US-006 ExecPlan
+
+### Goal
+Standardize the artifact layout so every run keeps runtime, checkpoint, config, report, inference, and bundle outputs under one predictable output root, with a documented cleanup policy for stale failed runs.
+
+### Scope
+- `src/hydranet/moe_training.py`
+- `scripts/train_moe_switcher.py`
+- `scripts/full_train_moe.py`
+- `scripts/smoke_test_moe.py`
+- `tests/test_moe_training.py`
+- `README.md`
+- `howtorun.md`
+- `full_training_contract.md`
+
+### Non-goals
+- No changes to training hyperparameters, model architecture, or stage ordering
+- No changes to routerset data preparation beyond where artifacts are written and documented
+
+### Invariants
+- Startup, dataset, checkpoint, summary, and smoke artifacts remain under the selected timestamped run directory
+- Runtime caches and downloaded checkpoints remain under `runtime_root`
+- Bundle/release artifacts must not be written outside `output_dir`
+- Failed runs still write the same summary/failure signals needed for diagnosis
+
+### Steps
+1. Add a single artifact-layout definition in `moe_training.py` that describes run, runtime, checkpoints, bundle, and inference locations.
+2. Route release creation through the run-local bundle root and reject release paths that escape the selected output root.
+3. Add regression coverage for the new release location and the negative case where a bundle path is requested outside the allowed roots.
+4. Update the training contract and operator docs with the final layout plus a cleanup policy for stale failed runs.
+5. Run targeted and required validation, review the diff for security/performance/regression risk, then record progress and commit.
+
+### Validation
+- `pytest tests/test_moe_training.py`
+- `make train-prepare`
+- `make smoketest`
+- `make smoketest-preflight`
+- `pytest`
+- `ruff check .`
+
+### Rollback
+- Revert the layout helper and release-root enforcement if any downstream tooling relies on the old external release location.
+- Existing run directories remain file-based; rollback is deleting affected output folders and re-running with the previous code.

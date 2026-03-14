@@ -26,6 +26,17 @@ Stage intent:
 
 The canonical run directory is `outputs/moe/<timestamp>/`.
 
+Artifact layout is defined centrally in `src/hydranet/moe_training.py` and follows these roots:
+
+- `output_root`: the timestamped run directory
+- `runtime_root`: `output_root/runtime/` by default, or an explicit runtime path when provided
+- `checkpoints_dir`: `runtime_root/weights/`
+- `configs_dir`: `output_root/`
+- `reports_dir`: `output_root/`
+- `bundle_root`: `output_root/bundle/`
+- `release_dir`: `output_root/bundle/phidranet_<release_name>/`
+- `inference_dir`: `output_root/inference/`
+
 `summary.json` is the source-of-truth run summary for training and export stages. It records:
 
 - the canonical stage list
@@ -49,7 +60,7 @@ Expected run-directory artifact names:
 - `routing_predictions.jsonl`
 - `summary.json`
 
-Expected release artifact names under `outputs/phidranet/phidranet_<release_name>/`:
+Expected release artifact names under `outputs/moe/<timestamp>/bundle/phidranet_<release_name>/`:
 
 - `student_moe_bundle.pt`
 - `config.json`
@@ -94,6 +105,7 @@ That means:
 - no trainer is created
 - no bundle export is attempted
 - the failure summary still records the resolved `manifest_path` and startup log paths
+- no bundle or report artifact may be written outside `output_root` or `runtime_root`
 
 ## Smoke Contract
 
@@ -108,3 +120,14 @@ Smoke-specific outputs live alongside the training run under the same `outputs/m
 - `inference/routing_predictions.jsonl`
 
 The smoke stage is the final gate for considering the full five-stage contract complete.
+
+## Retention Policy
+
+Keep successful runs until the corresponding release is no longer needed for audit or rerun purposes.
+
+For stale failed runs:
+
+- keep the most recent failed run that reproduces each distinct failure mode
+- remove older failed run directories by deleting the full timestamped `output_root`
+- never delete only part of a run directory, because `summary.json`, startup diagnostics, and bundle/inference outputs are intended to stay co-located
+- if a custom `runtime_root` is shared across runs, remove only the stale run directory and keep `runtime_root` unless you are intentionally purging shared caches/checkpoints

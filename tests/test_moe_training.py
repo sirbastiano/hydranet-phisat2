@@ -14,6 +14,7 @@ import numpy as np
 from hydranet.moe_training import (
     DEFAULT_ROUTERSET_EXPERTS,
     FULL_TRAINING_STAGES,
+    build_artifact_layout,
     configure_local_runtime_environment,
     default_rebuilt_manifest_path,
     MoESwitcherLightningModule,
@@ -330,13 +331,23 @@ class TestMoETraining(unittest.TestCase):
             report = configure_local_runtime_environment(
                 output_dir=root / "out",
                 runtime_root=root / "runtime",
-                weights_dir=root / "weights",
             )
 
             self.assertEqual(report["runtime_root"], str(root / "runtime"))
-            self.assertEqual(report["weights_dir"], str(root / "weights"))
+            self.assertEqual(report["weights_dir"], str(root / "runtime" / "weights"))
             self.assertTrue((root / "runtime" / "cache" / "huggingface").exists())
             self.assertEqual(report["env"]["HF_HUB_DISABLE_XET"], "1")
+
+    def test_configure_local_runtime_environment_rejects_weights_outside_runtime_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+
+            with self.assertRaisesRegex(ValueError, "weights_dir must stay under"):
+                configure_local_runtime_environment(
+                    output_dir=root / "out",
+                    runtime_root=root / "runtime",
+                    weights_dir=root / "weights",
+                )
 
     def test_run_training_startup_gate_writes_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -420,7 +431,7 @@ class TestMoETraining(unittest.TestCase):
             root = Path(tmpdir)
             _write_routerset_fixture(root)
             output_dir = root / "out"
-            release_dir = root / "release" / "phidranet_demo"
+            release_dir = output_dir / "bundle" / "phidranet_demo"
 
             class FakeLightningModule:
                 def __init__(self, model, *, learning_rate: float, weight_decay: float) -> None:
@@ -525,6 +536,9 @@ class TestMoETraining(unittest.TestCase):
             self.assertEqual(contract["expected_artifact_names"]["run_dir"]["summary"], "summary.json")
             self.assertEqual(contract["expected_artifact_names"]["run_dir"]["startup_gate"], "startup_gate.json")
             self.assertEqual(contract["expected_artifact_names"]["release_dir"]["release_manifest"], "release_manifest.json")
+            self.assertEqual(contract["layout"]["directories"]["bundle_root"], str(output_dir / "bundle"))
+            self.assertEqual(contract["layout"]["directories"]["release_dir"], str(release_dir))
+            self.assertEqual(contract["layout"]["directories"]["checkpoints_dir"], str(root / "runtime" / "weights"))
             self.assertTrue((output_dir / "summary.json").exists())
 
     def test_train_switcher_failure_after_fit_started_records_paths(self) -> None:
@@ -690,7 +704,7 @@ class TestMoETraining(unittest.TestCase):
             root = Path(tmpdir)
             _write_routerset_fixture(root)
             output_dir = root / "out"
-            release_dir = root / "release" / "phidranet_demo"
+            release_dir = output_dir / "bundle" / "phidranet_demo"
 
             class FakeLightningModule:
                 def __init__(self, model, *, learning_rate: float, weight_decay: float) -> None:
@@ -890,7 +904,7 @@ class TestMoETraining(unittest.TestCase):
             root = Path(tmpdir)
             _write_routerset_fixture(root)
             smoke_dir = root / "smoke"
-            release_dir = root / "release"
+            release_dir = smoke_dir / "bundle"
             with patch(
                 "hydranet.moe_training.preflight_routerset_training",
                 return_value={"manifest_path": str(default_rebuilt_manifest_path(root))},
@@ -949,7 +963,7 @@ class TestMoETraining(unittest.TestCase):
             root = Path(tmpdir)
             _write_routerset_fixture(root)
             output_dir = root / "out"
-            release_dir = root / "release" / "phidranet_demo"
+            release_dir = output_dir / "bundle" / "phidranet_demo"
             summary_path = output_dir / "summary.json"
 
             def _fake_train_switcher(**kwargs):
@@ -1027,7 +1041,7 @@ class TestMoETraining(unittest.TestCase):
             root = Path(tmpdir)
             _write_routerset_fixture(root)
             output_dir = root / "out"
-            release_dir = root / "release" / "phidranet_demo"
+            release_dir = output_dir / "bundle" / "phidranet_demo"
             summary_path = output_dir / "summary.json"
 
             def _fake_train_switcher(**kwargs):
@@ -1149,11 +1163,12 @@ class TestMoETraining(unittest.TestCase):
     def test_release_helpers_create_expected_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            release_dir = root / "release"
+            output_dir = root / "run"
+            release_dir = output_dir / "bundle"
             release_dir.mkdir(parents=True, exist_ok=True)
             bundle = root / "student_moe_bundle.pt"
             bundle.write_bytes(b"bundle")
-            run_dir = root / "run"
+            run_dir = output_dir
             run_dir.mkdir(parents=True, exist_ok=True)
             for filename in ["config.json", "metrics.json", "baseline_summary.json"]:
                 (run_dir / filename).write_text("{}", encoding="utf-8")
@@ -1163,6 +1178,7 @@ class TestMoETraining(unittest.TestCase):
             models = {name: create_phisatnet("checkpoint", n_classes=1) for name in DEFAULT_ROUTERSET_EXPERTS}
             moe_model = build_moe_student_from_models(models)
             release = create_phidranet_release(
+                output_dir=output_dir,
                 release_root=release_dir,
                 release_name="phidranet_demo",
                 model=moe_model,
@@ -1179,6 +1195,20 @@ class TestMoETraining(unittest.TestCase):
             self.assertTrue(Path(release["bundle_path"]).exists())
             deployment = write_deployment_readme(release_dir / "phidranet_demo", release_name="phidranet_demo")
             self.assertTrue(deployment.exists())
+
+    def test_artifact_layout_rejects_release_root_outside_output_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            output_dir = root / "out"
+            runtime_root = root / "runtime"
+
+            with self.assertRaisesRegex(ValueError, "release_root must stay under"):
+                build_artifact_layout(
+                    output_dir=output_dir,
+                    runtime_root=runtime_root,
+                    release_name="phidranet_demo",
+                    release_root=root / "elsewhere",
+                )
 
 
 if __name__ == "__main__":

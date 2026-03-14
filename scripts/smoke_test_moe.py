@@ -8,9 +8,6 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-DEFAULT_RELEASE_ROOT = "outputs/phidranet"
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--routerset-dir", default="routerset")
@@ -29,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-channels", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--release-name", default="smoke_v1")
-    parser.add_argument("--release-root", default=DEFAULT_RELEASE_ROOT)
+    parser.add_argument("--release-root", default=None)
     parser.add_argument("--runtime-root", default=None)
     parser.add_argument("--accelerator", default="cpu")
     parser.add_argument("--devices", default="1")
