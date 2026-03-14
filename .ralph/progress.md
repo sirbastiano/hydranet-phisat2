@@ -40,6 +40,48 @@ Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/
   - `ruff check .` currently fails on pre-existing notebook and legacy module issues unrelated to US-001, and the `make` training gates stalled in bootstrap on this machine before producing stage outputs beyond `script_bootstrap`.
 ---
 
+## [2026-03-14 12:59:59 UTC] - US-006: Standardize artifact layout and retention policy
+Thread: 
+Run: 20260314-115146-3579918 (iteration 6)
+Run log: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-6.log
+Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-6.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 80a3fb2 fix(training): standardize run artifact layout
+- Post-commit status: pending metadata commit
+- Verification:
+  - Command: PYTHONPATH=src .venv/bin/python -m pytest tests/test_moe_training.py -> PASS
+  - Command: make train-prepare PYTHON=.venv/bin/python TRAIN_OUTPUT_DIR=outputs/moe/us006_prepare RUNTIME_ROOT=outputs/moe/us006_prepare/runtime RELEASE_NAME=us006_prepare ACCELERATOR=cpu DEVICES=1 -> PASS
+  - Command: make smoketest-preflight PYTHON=.venv/bin/python SMOKE_OUTPUT_DIR=outputs/moe/us006_preflight RELEASE_NAME=us006_smoke -> PASS
+  - Command: make smoketest PYTHON=.venv/bin/python ROUTERSET_DIR=/tmp/us006_routerset REBUILT_MANIFEST=/tmp/us006_routerset/multilabel_dataset/manifest_moe_train.jsonl SMOKE_OUTPUT_DIR=outputs/moe/us006_smoke_fixture RUNTIME_ROOT=outputs/moe/us006_smoke_fixture/runtime RELEASE_NAME=us006_smoke_fixture ACCELERATOR=cpu DEVICES=1 -> PASS
+  - Command: PYTHONPATH=src .venv/bin/python -m pytest -> PASS
+  - Command: ruff check . -> FAIL
+- Files changed:
+  - PLANS.md
+  - README.md
+  - full_training_contract.md
+  - howtorun.md
+  - scripts/full_train_moe.py
+  - scripts/smoke_test_moe.py
+  - scripts/train_moe_switcher.py
+  - src/hydranet/moe_training.py
+  - tests/test_moe_training.py
+  - .ralph/activity.log
+  - .ralph/progress.md
+- What was implemented
+- Added a centralized artifact-layout definition in `hydranet.moe_training` that declares the run root, runtime root, checkpoints directory, bundle root, release directory, and inference directory in one place.
+- Moved default release artifacts under each run’s `output_dir/bundle/phidranet_<release_name>/` tree and enforced that release and checkpoint paths cannot escape `output_root` or `runtime_root`.
+- Extended the run contract and regression tests to cover the new bundle/checkpoint locations and the negative case where an external release root is requested.
+- Updated the training contract and operator docs to describe the standardized layout and the cleanup policy for stale failed runs.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - The contract builder needs the same path-normalization rules as the writer path; otherwise it can validate the right artifacts against the wrong expected location.
+  - Gotchas encountered
+  - The canonical `make smoketest` path is only practical with a small routerset fixture on CPU; running it against the full dataset takes hours even though the code path is correct.
+  - Useful context
+  - `ruff check .` is still blocked by pre-existing notebook and legacy-module lint errors outside the US-006 touch set, so repo-wide lint is not yet a clean signal for this story.
+---
+
 ---
 ## [2026-03-14 12:18:40 UTC] - US-002: Create a one-shot full-training command path
 Thread: 
