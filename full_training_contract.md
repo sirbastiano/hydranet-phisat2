@@ -76,11 +76,13 @@ Required failure details:
 - `startup_stage_path`
 - `error_type`
 - `error`
+- `non_finite_loss` when fit aborts on a NaN/Inf loss
 
 Example startup-progress failure:
 
 - if a failure happens after `trainer.fit(...)` becomes eligible to start, the recorded `failure_stage` is `fit_started`
 - the failure summary still includes `config_path`, `startup_log_path`, and `startup_stage_path`
+- for non-finite loss failures, the summary and `startup_log.txt` also record the batch index, sample ids, expert context, and a config snapshot before export is attempted
 
 ## Negative Contract
 

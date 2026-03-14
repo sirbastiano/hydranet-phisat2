@@ -251,8 +251,9 @@ class StartupRecorder:
         self.log_path = self.output_dir / "startup_log.txt"
         self.stage_path = self.output_dir / "startup_stage.json"
 
-    def mark(self, stage: str, **payload: Any) -> None:
-        self.current_stage = stage
+    def mark(self, stage: str, *, update_current_stage: bool = True, **payload: Any) -> None:
+        if update_current_stage:
+            self.current_stage = stage
         entry = {"timestamp": utc_timestamp(), "stage": stage, **payload}
         with self.log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True) + "\n")
@@ -274,6 +275,39 @@ class StartupRecorder:
             error=str(error),
             traceback="".join(traceback.format_exception(type(error), error, error.__traceback__)),
         )
+
+
+def extract_non_finite_loss_details(error: BaseException) -> Optional[dict[str, Any]]:
+    diagnostics = getattr(error, "diagnostics", None)
+    if not isinstance(diagnostics, Mapping):
+        return None
+
+    batch_index = diagnostics.get("batch_index")
+    try:
+        normalized_batch_index = int(batch_index) if batch_index is not None else -1
+    except (TypeError, ValueError):
+        normalized_batch_index = -1
+
+    sample_ids = diagnostics.get("sample_ids")
+    if isinstance(sample_ids, Sequence) and not isinstance(sample_ids, (str, bytes)):
+        normalized_sample_ids = [str(value) for value in sample_ids]
+    else:
+        sample_id = diagnostics.get("sample_id")
+        normalized_sample_ids = [str(sample_id)] if sample_id is not None else []
+
+    expert_context = diagnostics.get("expert_context")
+    if not isinstance(expert_context, Mapping):
+        expert_context = {}
+
+    return {
+        "stage": str(diagnostics.get("stage") or "fit"),
+        "batch_index": normalized_batch_index,
+        "batch_size": int(diagnostics.get("batch_size") or len(normalized_sample_ids)),
+        "loss_value": str(diagnostics.get("loss_value") or str(error)),
+        "sample_id": normalized_sample_ids[0] if normalized_sample_ids else "",
+        "sample_ids": normalized_sample_ids,
+        "expert_context": dict(expert_context),
+    }
 
 
 def resolve_routerset_dataset_root(routerset_dir: Union[str, Path]) -> Path:
@@ -1663,6 +1697,7 @@ def train_switcher(
     metrics_path = Path(output_dir) / "metrics.json"
     summary_path = Path(output_dir) / "summary.json"
     startup_gate_path = Path(output_dir) / "startup_gate.json"
+    config: Optional[dict[str, Any]] = None
 
     try:
         recorder.mark(
@@ -1899,6 +1934,16 @@ def train_switcher(
         write_run_summary(output_dir, summary)
         return summary
     except BaseException as error:
+        non_finite_loss = extract_non_finite_loss_details(error)
+        if non_finite_loss is not None:
+            non_finite_loss["config_snapshot"] = dict(config or {})
+            recorder.mark(
+                "non_finite_loss_detected",
+                update_current_stage=False,
+                error_type=type(error).__name__,
+                failure_stage=recorder.failure_stage or recorder.current_stage,
+                non_finite_loss=non_finite_loss,
+            )
         recorder.fail(recorder.current_stage or "startup_failed", error)
         failure_summary = {
             "status": "failed",
@@ -1925,6 +1970,8 @@ def train_switcher(
                 completed_stages=completed_stages_for_failed_run(output_dir),
             ),
         }
+        if non_finite_loss is not None:
+            failure_summary["non_finite_loss"] = non_finite_loss
         write_run_summary(output_dir, failure_summary)
         raise
 

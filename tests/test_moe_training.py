@@ -588,6 +588,103 @@ class TestMoETraining(unittest.TestCase):
             self.assertEqual(summary["startup_log_path"], str(output_dir / "startup_log.txt"))
             self.assertEqual(summary["startup_stage_path"], str(output_dir / "startup_stage.json"))
 
+    def test_train_switcher_non_finite_loss_records_batch_diagnostics_and_blocks_export(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+
+            class FakeLightningModule:
+                def __init__(self, model, *, learning_rate: float, weight_decay: float) -> None:
+                    self.model = model
+                    self.learning_rate = learning_rate
+                    self.weight_decay = weight_decay
+
+            class NonFiniteBatchError(RuntimeError):
+                def __init__(self) -> None:
+                    super().__init__("Non-finite train loss detected")
+                    self.diagnostics = {
+                        "stage": "train",
+                        "batch_index": 2,
+                        "batch_size": 2,
+                        "loss_value": "nan",
+                        "sample_id": "0000001",
+                        "sample_ids": ["0000001", "0000013"],
+                        "expert_context": {
+                            "sample_expert_names": ["fire", "fire"],
+                            "active_experts": [["fire"], ["fire"]],
+                        },
+                    }
+
+            class FakeTrainer:
+                callback_metrics = {}
+
+                def fit(self, lightning_module, train_dataloaders=None, val_dataloaders=None) -> None:
+                    _ = (lightning_module, train_dataloaders, val_dataloaders)
+                    raise NonFiniteBatchError()
+
+            class FakeModel:
+                encoder_source_task = "fire"
+
+            def _fake_baseline_summary(out: Path) -> Path:
+                path = Path(out) / "baseline_summary.json"
+                path.write_text("{}", encoding="utf-8")
+                return path
+
+            with patch(
+                "hydranet.moe_training.resolve_student_checkpoint_report",
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
+            ), patch("hydranet.moe_training.probe_lightning_import", return_value=None), patch(
+                "hydranet.moe_training.build_routerset_moe",
+                return_value=FakeModel(),
+            ), patch(
+                "hydranet.moe_training.capture_baseline_summary",
+                side_effect=lambda model, out: _fake_baseline_summary(out),
+            ), patch(
+                "hydranet.moe_training.save_student_moe_bundle",
+            ) as save_bundle_mock, patch(
+                "hydranet.moe_training.create_phidranet_release",
+            ) as create_release_mock, patch(
+                "hydranet.moe_training.load_lightning_training_components",
+                return_value=(FakeLightningModule, lambda *args, **kwargs: FakeTrainer(), lambda *args, **kwargs: None),
+            ):
+                with self.assertRaisesRegex(NonFiniteBatchError, "Non-finite train loss detected"):
+                    train_switcher(
+                        routerset_dir=root,
+                        output_dir=output_dir,
+                        expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                        runtime_root=root / "runtime",
+                        target_size=16,
+                        target_channels=8,
+                        release_name="demo",
+                        startup_timeout_seconds=1,
+                        max_epochs=1,
+                    )
+
+            save_bundle_mock.assert_not_called()
+            create_release_mock.assert_not_called()
+            self.assertFalse((output_dir / "student_moe_bundle.pt").exists())
+
+            summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+            startup_log_entries = [
+                json.loads(line)
+                for line in (output_dir / "startup_log.txt").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            non_finite_entry = next(entry for entry in startup_log_entries if entry["stage"] == "non_finite_loss_detected")
+
+            self.assertEqual(summary["status"], "failed")
+            self.assertEqual(summary["failure_stage"], "fit_started")
+            self.assertEqual(summary["error_type"], "NonFiniteBatchError")
+            self.assertEqual(summary["non_finite_loss"]["batch_index"], 2)
+            self.assertEqual(summary["non_finite_loss"]["sample_id"], "0000001")
+            self.assertEqual(summary["non_finite_loss"]["sample_ids"], ["0000001", "0000013"])
+            self.assertEqual(summary["non_finite_loss"]["expert_context"]["sample_expert_names"], ["fire", "fire"])
+            self.assertEqual(summary["non_finite_loss"]["config_snapshot"]["release_name"], "phidranet_demo")
+            self.assertEqual(non_finite_entry["error_type"], "NonFiniteBatchError")
+            self.assertEqual(non_finite_entry["failure_stage"], "fit_started")
+            self.assertEqual(non_finite_entry["non_finite_loss"]["loss_value"], "nan")
+
     def test_train_switcher_skip_startup_gate_writes_skipped_gate_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

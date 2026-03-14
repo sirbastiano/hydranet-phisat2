@@ -114,3 +114,42 @@ Stabilize startup gate diagnostics so maintainer-facing failures clearly record 
 ### Rollback
 - Revert the startup gate/reporting changes if downstream tooling depends on the previous gate JSON shape.
 - The change is file-based only; removing generated run artifacts is sufficient recovery.
+
+## US-005 ExecPlan
+
+### Goal
+Abort fit immediately when training or validation loss becomes non-finite, while writing batch-level diagnostics to the startup log and run summary before any export can succeed.
+
+### Scope
+- `src/hydranet/moe_lightning.py`
+- `src/hydranet/moe_training.py`
+- `tests/test_moe_training.py`
+- `full_training_contract.md`
+
+### Non-goals
+- No changes to model architecture, optimizer settings, checkpoint discovery, or smoke-stage behavior
+- No changes to the public CLI surface beyond the added failure diagnostics in existing artifacts
+
+### Invariants
+- Failures that occur after fit becomes eligible still report `failure_stage` from the fit boundary
+- `summary.json` and `startup_log.txt` remain the source-of-truth artifacts for training failures
+- Non-finite loss must prevent bundle export and must not mark the run as successful
+- Existing startup-gate and preflight behaviors remain unchanged
+
+### Steps
+1. Raise a structured non-finite-loss error from the Lightning step with batch index, sample ids, expert context, and loss metadata.
+2. Teach `train_switcher(...)` to detect that structured failure, append the diagnostic event to `startup_log.txt` without changing the fit-stage contract, and persist a config snapshot plus batch diagnostics into `summary.json`.
+3. Add regression coverage for the NaN/Inf failure path and update the training contract doc for the new failure artifact fields.
+4. Run targeted and required repo validation, then record progress, review the diff for security/perf/regression risk, and commit.
+
+### Validation
+- `pytest tests/test_moe_training.py`
+- `make train-prepare`
+- `make smoketest`
+- `make smoketest-preflight`
+- `pytest`
+- `ruff check .`
+
+### Rollback
+- Revert the structured non-finite-loss diagnostics if they cause trainer compatibility issues.
+- The change is file-based only; failed-run artifacts can be removed by deleting the affected output directory.
