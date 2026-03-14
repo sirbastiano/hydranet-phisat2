@@ -117,6 +117,15 @@ The canonical dataset root is `routerset/multilabel_dataset/`. The routerset tra
 
 The `--prepare-only` path is now the canonical training-readiness step. It configures a local runtime/cache root, writes `runtime_environment.json`, prefetches the six expert checkpoints into a local weights directory, runs the dataset/checkpoint preflight, and executes a startup gate that loads one routerset sample and probes Lightning import before any fit starts.
 
+Canonical environment presets for the `make` targets:
+
+```bash
+export MICROMAMBA=/shared/home/rdelprete/bin/micromamba
+export MAMBA_ROOT_PREFIX=/tmp/micromamba-hydranet-root
+export MICROMAMBA_PREFIX=/tmp/hydranet-phisat2-mamba
+export PYTHONPATH=src
+```
+
 For the canonical one-shot full-training path, use:
 
 ```bash
@@ -125,13 +134,41 @@ make full-train MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX RELEASE_NAME=v1 TRAIN_OUTPU
 
 This runs preflight, startup gate, full training/export, and post-export smoke validation in one invocation. A successful run updates `summary.json` to mark the `smoke` stage complete and keeps the bundle, reports, and smoke/inference artifacts under the same timestamped output directory.
 
-Then run training and final release creation:
+Canonical prepare -> full-train -> smoke verification flow:
 
 ```bash
-PYTHONPATH=src $MICROMAMBA run -p "$MICROMAMBA_PREFIX" python scripts/train_moe_switcher.py \
+make train-prepare \
+  MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX \
+  RELEASE_NAME=v1 \
+  TRAIN_OUTPUT_DIR=outputs/moe/train_v1 \
+  RUNTIME_ROOT=outputs/moe/train_v1/runtime
+
+make full-train \
+  MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX \
+  RELEASE_NAME=v1 \
+  TRAIN_OUTPUT_DIR=outputs/moe/train_v1 \
+  RUNTIME_ROOT=outputs/moe/train_v1/runtime
+
+python - <<'PY'
+from pathlib import Path
+import json
+
+summary = json.loads(Path("outputs/moe/train_v1/summary.json").read_text(encoding="utf-8"))
+smoke = json.loads(Path("outputs/moe/train_v1/smoke_test_summary.json").read_text(encoding="utf-8"))
+assert summary["status"] == "completed"
+assert summary["failure_stage"] is None
+assert smoke["status"] == "completed"
+print("full training + smoke verification passed")
+PY
+```
+
+Direct script equivalent for the same full-training flow:
+
+```bash
+PYTHONPATH=src $MICROMAMBA run -p "$MICROMAMBA_PREFIX" python scripts/full_train_moe.py \
   --routerset-dir routerset \
   --manifest-path routerset/multilabel_dataset/manifest_moe_train.jsonl \
-  --runtime-root /tmp/hydranet-runtime \
+  --runtime-root outputs/moe/train_v1/runtime \
   --output-dir outputs/moe/train_v1 \
   --release-name v1 \
   --training finetuning \
@@ -165,6 +202,13 @@ This creates:
 - run artifacts, config, and reports under `outputs/moe/<timestamp>/`
 - runtime caches and downloaded checkpoints under `outputs/moe/<timestamp>/runtime/` unless `--runtime-root` overrides it
 - the final release bundle under `outputs/moe/<timestamp>/bundle/phidranet_v1/`
+- smoke verification outputs under `outputs/moe/<timestamp>/smoke_test_summary.json` and `outputs/moe/<timestamp>/inference/`
+
+Troubleshooting:
+
+- `SIGTERM`: if `make smoketest` or `make full-train` is terminated by the shell or job runner, treat the run as incomplete. Inspect `outputs/moe/<timestamp>/summary.json`, `startup_stage.json`, and `startup_log.txt` to confirm the last completed stage before rerunning the entire command into a fresh `TRAIN_OUTPUT_DIR`.
+- Startup timeout: if `startup_gate.json` reports `status=failed` with `error_type=TimeoutError`, increase `--startup-timeout-seconds` on the direct script path or rerun after confirming the local micromamba prefix is on `/tmp` rather than NFS-backed storage.
+- NaN-loss recovery: if `summary.json` reports `error_type=NonFiniteBatchError`, the run intentionally stops before export. Review `summary.json` and `startup_log.txt` for `non_finite_loss` details, then rerun from `make train-prepare` after adjusting the training preset or dataset state; do not reuse the failed run directory as a release candidate.
 
 The final bundle can be reloaded with:
 

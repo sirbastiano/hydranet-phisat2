@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-03-14 13:01:42 | run=20260314-115146-3579918 | iter=6 | mode=build | story=US-006 | duration=758s | status=success
 - 2026-03-14 12:49:02 | run=20260314-115146-3579918 | iter=5 | mode=build | story=US-005 | duration=504s | status=success
 - 2026-03-14 12:40:36 | run=20260314-115146-3579918 | iter=4 | mode=build | story=US-004 | duration=945s | status=success
 - 2026-03-14 12:24:49 | run=20260314-115146-3579918 | iter=3 | mode=build | story=US-003 | duration=619s | status=success
@@ -41,3 +42,8 @@
 [2026-03-14 12:59:42] Completed verification for US-006; prepare, preflight, smoketest fixture, pytest complete; reviewing worktree before progress update
 [2026-03-14 13:00:45] Updated US-006 progress entry with verification and commit details; preparing metadata commit and clean-status check
 [2026-03-14 13:01:08] Finalized US-006 progress entry with clean post-commit status; preparing final metadata commit and HEAD verification
+[2026-03-14 13:01:42] ITERATION 6 end (duration=758s)
+[2026-03-14 13:01:44] ITERATION 7 start (mode=build story=US-007)
+[2026-03-14 13:02:53] US-007 audit complete: identified stale runbook guidance and confirmed canonical full-train command plus failure artifacts
+[2026-03-14 13:15:33] US-007 verification complete: pytest passed; smoketest-preflight passed; train-prepare and smoketest hit the existing 60s Lightning import startup timeout; ruff check failed on pre-existing unrelated lint issues
+[2026-03-14 13:15:33] US-007 doc changes applied: canonical full-train runbook, env presets, output path map, and troubleshooting published in README/howtorun

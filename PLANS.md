@@ -197,3 +197,40 @@ Standardize the artifact layout so every run keeps runtime, checkpoint, config, 
 ### Rollback
 - Revert the layout helper and release-root enforcement if any downstream tooling relies on the old external release location.
 - Existing run directories remain file-based; rollback is deleting affected output folders and re-running with the previous code.
+
+## US-007 ExecPlan
+
+### Goal
+Publish a canonical full-training runbook that matches the current Make targets, CLI entrypoints, artifact layout, and failure diagnostics so teammates can repeat the workflow without guessing commands.
+
+### Scope
+- `README.md`
+- `howtorun.md`
+- `.ralph/progress.md`
+- `.ralph/activity.log`
+
+### Non-goals
+- No code-path changes to training, smoke validation, or artifact writing
+- No new scripts, targets, or environment variables beyond what the repo already supports
+
+### Invariants
+- The docs must only mention commands and flags that exist in `Makefile` or the checked-in CLI scripts
+- The documented flow must preserve the canonical order: prepare, full-train, smoke verification
+- Troubleshooting guidance must point to real artifacts emitted by the existing failure contract
+
+### Steps
+1. Audit the current docs against `Makefile`, CLI scripts, and `moe_training.py` artifact/failure outputs.
+2. Replace stale direct-train guidance with the canonical `make full-train` runbook and explicit environment variable presets.
+3. Add one documented prepare -> full-train -> smoke verification flow, an output path map, and troubleshooting for SIGTERM, startup timeout, and NaN-loss recovery.
+4. Run the required verification gates, then record progress, review the doc changes for regression/security/performance risk, and commit.
+
+### Validation
+- `make train-prepare`
+- `make smoketest`
+- `make smoketest-preflight`
+- `pytest`
+- `ruff check .`
+
+### Rollback
+- Revert the doc updates if they misstate the command surface or artifact contract.
+- No stateful rollback is required beyond removing any generated verification outputs.

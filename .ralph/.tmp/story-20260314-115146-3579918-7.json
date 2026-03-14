@@ -1,0 +1,14 @@
+{
+  "ok": true,
+  "total": 8,
+  "remaining": 3,
+  "quality_gates": [
+    "make train-prepare",
+    "make smoketest",
+    "make smoketest-preflight",
+    "pytest",
+    "ruff check ."
+  ],
+  "id": "US-007",
+  "title": "Publish full-training runbook and command presets"
+}
