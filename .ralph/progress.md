@@ -47,8 +47,8 @@ Run log: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-
 Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-6.md
 - Guardrails reviewed: yes
 - No-commit run: false
-- Commit: 80a3fb2 fix(training): standardize run artifact layout
-- Post-commit status: pending metadata commit
+- Commit: 80a3fb2 fix(training): standardize run artifact layout; 594e0b1 chore(ralph): record us-006 progress
+- Post-commit status: clean
 - Verification:
   - Command: PYTHONPATH=src .venv/bin/python -m pytest tests/test_moe_training.py -> PASS
   - Command: make train-prepare PYTHON=.venv/bin/python TRAIN_OUTPUT_DIR=outputs/moe/us006_prepare RUNTIME_ROOT=outputs/moe/us006_prepare/runtime RELEASE_NAME=us006_prepare ACCELERATOR=cpu DEVICES=1 -> PASS
