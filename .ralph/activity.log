@@ -34,3 +34,4 @@
 [2026-03-14 12:41:10] Start US-005 implementation: reviewing command surface and training pipeline diagnostics.
 [2026-03-14 12:43:06] Implemented US-005 code changes: non-finite loss now raises structured fit diagnostics, writes summary/startup log details, and blocks export.
 [2026-03-14 12:47:51] US-005 verification: repo venv targeted/full pytest passed; train-prepare and smoketest-preflight passed; smoketest entered real training cleanly and was stopped due long runtime; ruff check failed on pre-existing unrelated repo issues.
+[2026-03-14 12:48:32] Updated US-005 progress entry with commit and verification details; preparing metadata commit and final clean-status check.

@@ -162,5 +162,48 @@ Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/
   - Gotchas encountered
   - `make smoketest` now clears the startup gate but still runs a very long one-epoch training job on the full routerset dataset, so it is not a quick verification path on CPU.
   - Useful context
-  - `ruff check .` is still failing on pre-existing notebook and legacy module issues outside the US-004 touch set; targeted Ruff on the changed files passed.
+- `ruff check .` is still failing on pre-existing notebook and legacy module issues outside the US-004 touch set; targeted Ruff on the changed files passed.
+---
+
+## [2026-03-14 12:48:17 UTC] - US-005: Add non-finite loss safeguards during fit
+Thread: 
+Run: 20260314-115146-3579918 (iteration 5)
+Run log: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-5.log
+Run summary: /shared/home/rdelprete/PythonProjects/hydranet-phisat2/.ralph/runs/run-20260314-115146-3579918-iter-5.md
+- Guardrails reviewed: yes
+- No-commit run: false
+- Commit: 157d0b2 fix(training): guard non-finite losses
+- Post-commit status: clean after metadata commit
+- Verification:
+  - Command: ./.venv/bin/python -m pytest tests/test_moe_training.py -k non_finite_loss -> PASS
+  - Command: ./.venv/bin/python -m pytest tests/test_moe_training.py -> PASS
+  - Command: PATH=./.venv/bin:$PATH make train-prepare -> PASS
+  - Command: PATH=./.venv/bin:$PATH make smoketest-preflight -> PASS
+  - Command: PATH=./.venv/bin:$PATH pytest -> PASS
+  - Command: PATH=./.venv/bin:$PATH ruff check . -> FAIL
+  - Command: PATH=./.venv/bin:$PATH make smoketest -> FAIL (entered the canonical smoke fit cleanly, then was stopped after confirming startup and live training because the one-epoch full-routerset CPU run is too long for this session)
+- Files changed:
+  - PLANS.md
+  - full_training_contract.md
+  - src/hydranet/moe_lightning.py
+  - src/hydranet/moe_training.py
+  - tests/test_moe_training.py
+  - .agents/tasks/prd-full-training.json
+  - .ralph/.tmp/prompt-20260314-115146-3579918-5.md
+  - .ralph/.tmp/story-20260314-115146-3579918-5.json
+  - .ralph/.tmp/story-20260314-115146-3579918-5.md
+  - .ralph/activity.log
+  - .ralph/progress.md
+- What was implemented
+- Added a structured `NonFiniteLossError` from the Lightning fit step so NaN/Inf losses abort with batch index, sample ids, and expert-context diagnostics instead of continuing toward export.
+- Updated `train_switcher(...)` to append a `non_finite_loss_detected` event to `startup_log.txt`, preserve the fit-stage failure contract, and persist the same diagnostics plus a config snapshot into `summary.json`.
+- Added a regression test proving the non-finite-loss path writes diagnostics, keeps `failure_stage`, and does not emit a bundle or release.
+- Documented the new non-finite-loss failure fields in the full-training contract.
+- **Learnings for future iterations:**
+  - Patterns discovered
+  - The fit failure contract can gain richer diagnostics without changing `failure_stage` by logging an event that does not advance the recorder’s source-of-truth stage.
+  - Gotchas encountered
+  - The repo-wide `ruff check .` gate still fails on pre-existing notebook and legacy-module lint errors outside the US-005 touch set, and `make smoketest` remains a very long CPU-bound training run.
+  - Useful context
+  - The project `.venv` is required for reliable pytest execution on this machine because the host `pytest` lacks `torch`.
 ---
