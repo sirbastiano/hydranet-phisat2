@@ -354,8 +354,40 @@ class TestMoETraining(unittest.TestCase):
                 )
 
             self.assertEqual(report["lightning_probe"]["status"], "ok")
+            self.assertEqual(report["status"], "ok")
+            self.assertEqual(report["timeout_seconds"], 1)
             self.assertTrue((output_dir / "startup_gate.json").exists())
             self.assertEqual(tuple(report["sample_image_shape"]), (8, 16, 16))
+
+    def test_run_training_startup_gate_probe_failure_writes_timeout_and_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+
+            with patch(
+                "hydranet.moe_training.probe_lightning_import",
+                side_effect=RuntimeError("No module named pytorch_lightning"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "No module named pytorch_lightning"):
+                    run_training_startup_gate(
+                        routerset_dir=root,
+                        expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                        target_size=16,
+                        target_channels=8,
+                        output_dir=output_dir,
+                        startup_timeout_seconds=7,
+                    )
+
+            report = json.loads((output_dir / "startup_gate.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["timeout_seconds"], 7)
+            self.assertEqual(report["error_type"], "RuntimeError")
+            self.assertIn("No module named pytorch_lightning", report["error"])
+            self.assertIn("RuntimeError", report["traceback"])
+            self.assertEqual(report["lightning_probe"]["status"], "failed")
+            self.assertEqual(report["lightning_probe"]["timeout_seconds"], 7)
+            self.assertIn("RuntimeError", report["lightning_probe"]["traceback"])
 
     def test_prepare_routerset_training_writes_prepare_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -661,8 +693,56 @@ class TestMoETraining(unittest.TestCase):
             gate_report = json.loads((output_dir / "startup_gate.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["status"], "completed")
             self.assertEqual(gate_report["status"], "skipped")
+            self.assertEqual(gate_report["timeout_seconds"], 60)
             self.assertEqual(gate_report["lightning_probe"]["status"], "skipped")
             self.assertEqual(probe_mock.call_count, 1)
+
+    def test_train_switcher_startup_gate_timeout_records_startup_failed_before_fit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+
+            with patch(
+                "hydranet.moe_training.resolve_student_checkpoint_report",
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
+            ), patch(
+                "hydranet.moe_training.probe_lightning_import",
+                side_effect=TimeoutError("Lightning import probe timed out before trainer startup completed."),
+            ), patch("hydranet.moe_training.build_routerset_moe") as build_model_mock, patch(
+                "hydranet.moe_training.load_lightning_training_components"
+            ) as lightning_components_mock:
+                with self.assertRaisesRegex(TimeoutError, "Lightning import probe timed out"):
+                    train_switcher(
+                        routerset_dir=root,
+                        output_dir=output_dir,
+                        expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                        runtime_root=root / "runtime",
+                        target_size=16,
+                        target_channels=8,
+                        release_name="demo",
+                        startup_timeout_seconds=3,
+                        max_epochs=1,
+                    )
+
+            build_model_mock.assert_not_called()
+            lightning_components_mock.assert_not_called()
+            summary = json.loads((output_dir / "summary.json").read_text(encoding="utf-8"))
+            gate_report = json.loads((output_dir / "startup_gate.json").read_text(encoding="utf-8"))
+            startup_log_lines = (output_dir / "startup_log.txt").read_text(encoding="utf-8").splitlines()
+            startup_log_entries = [json.loads(line) for line in startup_log_lines if line.strip()]
+
+            self.assertEqual(summary["status"], "failed")
+            self.assertEqual(summary["failure_stage"], "startup_failed")
+            self.assertEqual(summary["startup_stage"], "startup_failed")
+            self.assertNotIn("fit_started", [entry["stage"] for entry in startup_log_entries])
+            self.assertIn("startup_gate_started", [entry["stage"] for entry in startup_log_entries])
+            self.assertIn("startup_gate_failed", [entry["stage"] for entry in startup_log_entries])
+            self.assertEqual(gate_report["status"], "failed")
+            self.assertEqual(gate_report["timeout_seconds"], 3)
+            self.assertEqual(gate_report["error_type"], "TimeoutError")
+            self.assertIn("TimeoutError", gate_report["traceback"])
+            self.assertTrue(all("timestamp" in entry for entry in startup_log_entries))
 
     def test_train_switcher_missing_manifest_fails_before_long_running_work(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

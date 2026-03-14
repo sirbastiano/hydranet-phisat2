@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--accelerator", default="cpu")
     parser.add_argument("--devices", default="1")
     parser.add_argument("--precision", default=None)
-    parser.add_argument("--startup-timeout-seconds", type=int, default=20)
+    parser.add_argument("--startup-timeout-seconds", type=int, default=60)
     parser.add_argument("--skip-startup-gate", action="store_true")
     parser.add_argument("--rebuild-splits", action="store_true")
     parser.add_argument("--rebuilt-manifest-out", default=None)

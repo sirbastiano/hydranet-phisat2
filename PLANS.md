@@ -78,3 +78,39 @@ Strengthen preflight so dataset and checkpoint readiness failures are caught bef
 ### Rollback
 - Revert the preflight/checkpoint helper changes if they break checkpoint acquisition or report consumers.
 - The change is file-based only; no migration or cleanup beyond removing generated run artifacts is required.
+
+## US-004 ExecPlan
+
+### Goal
+Stabilize startup gate diagnostics so maintainer-facing failures clearly record timeout, traceback, and an explicit startup failure stage before fit begins.
+
+### Scope
+- `src/hydranet/moe_training.py`
+- `tests/test_moe_training.py`
+
+### Non-goals
+- No changes to checkpoint readiness, training hyperparameters, or smoke/export orchestration
+- No changes to CLI surface beyond the existing startup timeout behavior
+
+### Invariants
+- `startup_gate.json`, `startup_log.txt`, and `startup_stage.json` remain the source-of-truth artifacts for startup diagnostics
+- Timeout or import failures must abort before `fit_started`
+- Successful startup-gate behavior and skipped-gate behavior must remain compatible with existing prepare/train flows
+
+### Steps
+1. Expand the startup-gate report so it records a top-level status, timeout, and failure traceback when the probe fails.
+2. Tighten training-stage startup failure handling so the recorder marks an explicit `startup_failed` stage and logs the gate transition timestamps before re-raising.
+3. Add regression tests for probe failure details and the negative case where startup failure does not proceed to fit.
+4. Run targeted and required repo validation, then record the outcome in logs and commit.
+
+### Validation
+- `pytest tests/test_moe_training.py`
+- `make train-prepare`
+- `make smoketest`
+- `make smoketest-preflight`
+- `pytest`
+- `ruff check .`
+
+### Rollback
+- Revert the startup gate/reporting changes if downstream tooling depends on the previous gate JSON shape.
+- The change is file-based only; removing generated run artifacts is sufficient recovery.

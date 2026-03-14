@@ -39,7 +39,7 @@ DEFAULT_ROUTERSET_TARGET_SIZE = 256
 DEFAULT_RELEASE_ROOT = "outputs/phidranet"
 DEFAULT_ROUTERSET_DATASET_SUBDIR = "multilabel_dataset"
 DEFAULT_ROUTERSET_MANIFEST = "multilabel_dataset/manifest.jsonl"
-DEFAULT_STARTUP_TIMEOUT_SECONDS = 20
+DEFAULT_STARTUP_TIMEOUT_SECONDS = 60
 DEFAULT_RUNTIME_SUBDIR = "runtime"
 FULL_TRAINING_CONTRACT_VERSION = 1
 FULL_TRAINING_STAGES = (
@@ -939,7 +939,7 @@ def _lightning_import_probe_code() -> str:
     )
 
 
-def probe_lightning_import(*, timeout_seconds: int = 20) -> None:
+def probe_lightning_import(*, timeout_seconds: int = DEFAULT_STARTUP_TIMEOUT_SECONDS) -> None:
     env = dict(os.environ)
     env.setdefault("PYTORCH_NVML_BASED_CUDA_CHECK", "1")
     env.setdefault("CUDA_VISIBLE_DEVICES", "")
@@ -988,6 +988,7 @@ def run_training_startup_gate(
     )
     sample = dataset[0]
     gate_report: dict[str, Any] = {
+        "status": "pending",
         "routerset_dir": str(routerset_dir),
         "dataset_root": str(resolve_routerset_dataset_root(routerset_dir)),
         "manifest_path": str(active_manifest_path),
@@ -995,6 +996,7 @@ def run_training_startup_gate(
         "target_size": int(target_size),
         "target_channels": int(target_channels),
         "balanced_sampling": bool(balanced_sampling),
+        "timeout_seconds": int(startup_timeout_seconds),
         "torch_version": torch.__version__,
         "train_record_count": len(dataset.records),
         "sample_source_sample_id": sample["source_sample_id"],
@@ -1007,21 +1009,28 @@ def run_training_startup_gate(
     if run_lightning_probe:
         try:
             probe_lightning_import(timeout_seconds=startup_timeout_seconds)
+            gate_report["status"] = "ok"
             gate_report["lightning_probe"] = {
                 "status": "ok",
                 "timeout_seconds": int(startup_timeout_seconds),
             }
         except BaseException as error:
+            gate_report["status"] = "failed"
+            gate_report["error_type"] = type(error).__name__
+            gate_report["error"] = str(error)
+            gate_report["traceback"] = "".join(traceback.format_exception(type(error), error, error.__traceback__))
             gate_report["lightning_probe"] = {
                 "status": "failed",
                 "timeout_seconds": int(startup_timeout_seconds),
                 "error_type": type(error).__name__,
                 "error": str(error),
+                "traceback": gate_report["traceback"],
             }
             if output_dir is not None:
                 save_json(Path(output_dir) / "startup_gate.json", gate_report)
             raise
     else:
+        gate_report["status"] = "skipped"
         gate_report["lightning_probe"] = {
             "status": "skipped",
             "timeout_seconds": int(startup_timeout_seconds),
@@ -1712,17 +1721,26 @@ def train_switcher(
         recorder.mark("dataset_report_written", dataset_report_path=str(dataset_report_path))
 
         if run_startup_gate:
-            run_training_startup_gate(
-                routerset_dir=routerset_dir,
-                manifest_path=active_manifest_path,
-                expert_names=expert_names,
-                target_size=target_size,
-                target_channels=target_channels,
-                balanced_sampling=balanced_sampling,
-                output_dir=output_dir,
-                startup_timeout_seconds=startup_timeout_seconds,
-                run_lightning_probe=True,
-            )
+            recorder.mark("startup_gate_started", timeout_seconds=int(startup_timeout_seconds))
+            try:
+                run_training_startup_gate(
+                    routerset_dir=routerset_dir,
+                    manifest_path=active_manifest_path,
+                    expert_names=expert_names,
+                    target_size=target_size,
+                    target_channels=target_channels,
+                    balanced_sampling=balanced_sampling,
+                    output_dir=output_dir,
+                    startup_timeout_seconds=startup_timeout_seconds,
+                    run_lightning_probe=True,
+                )
+            except BaseException:
+                recorder.mark(
+                    "startup_gate_failed",
+                    startup_gate_path=str(startup_gate_path) if startup_gate_path.exists() else "",
+                )
+                recorder.current_stage = "startup_failed"
+                raise
             recorder.mark("startup_gate_completed")
         else:
             save_json(
@@ -1730,8 +1748,10 @@ def train_switcher(
                 {
                     "status": "skipped",
                     "manifest_path": manifest_path_value,
+                    "timeout_seconds": int(startup_timeout_seconds),
                     "lightning_probe": {
                         "status": "skipped",
+                        "timeout_seconds": int(startup_timeout_seconds),
                         "reason": "startup gate skipped by caller",
                     },
                 },
