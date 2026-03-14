@@ -126,7 +126,7 @@
     {
       "id": "US-002",
       "title": "Create a one-shot full-training command path",
-      "status": "in_progress",
+      "status": "done",
       "dependsOn": [
         "US-001"
       ],
@@ -138,13 +138,13 @@
         "If any stage fails, exit code is non-zero and failure_stage is written"
       ],
       "startedAt": "2026-03-14T12:00:45.604302+00:00",
-      "completedAt": null,
-      "updatedAt": "2026-03-14T12:00:45.604320+00:00"
+      "completedAt": "2026-03-14T12:14:28.320758+00:00",
+      "updatedAt": "2026-03-14T12:14:28.320731+00:00"
     },
     {
       "id": "US-003",
       "title": "Strengthen preflight and checkpoint readiness checks",
-      "status": "open",
+      "status": "in_progress",
       "dependsOn": [
         "US-002"
       ],
@@ -154,7 +154,10 @@
         "Example: valid manifest produces non-empty dataset_report.json and checkpoint_report.json",
         "Negative case: missing expert checkpoint set aborts run with explicit expert name and source path",
         "Checkpoint stage records successful/failed per expert with deterministic path"
-      ]
+      ],
+      "startedAt": "2026-03-14T12:14:30.411467+00:00",
+      "completedAt": null,
+      "updatedAt": "2026-03-14T12:14:30.411495+00:00"
     },
     {
       "id": "US-004",

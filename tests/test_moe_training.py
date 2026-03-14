@@ -110,6 +110,45 @@ def _write_routerset_fixture(root: Path, *, broken_fire_validation: bool = False
     default_rebuilt_manifest_path(root).write_text(manifest_text, encoding="utf-8")
 
 
+def _checkpoint_report(
+    *,
+    failed_expert: Optional[str] = None,
+    weights_dir: str = "weights",
+) -> Dict[str, Dict[str, object]]:
+    report: Dict[str, Dict[str, object]] = {}
+    for expert in DEFAULT_ROUTERSET_EXPERTS:
+        source_path = f"catalog/{expert}/student.pt"
+        payload: Dict[str, object] = {
+            "status": "ok",
+            "training": "finetuning",
+            "n_shots": 5000,
+            "catalog_path": "src/hydranet/model_weights.csv",
+            "source_path": source_path,
+            "deterministic_path": f"{weights_dir}/{source_path}",
+            "checkpoint_path": f"{weights_dir}/{source_path}",
+        }
+        if expert == failed_expert:
+            payload["status"] = "failed"
+            payload["checkpoint_path"] = ""
+            payload["error_type"] = "ValueError"
+            payload["error"] = f"No weights found for {expert}"
+        report[expert] = payload
+    return report
+
+
+def _drop_manifest_rows(root: Path, *, expert: str, split: str) -> None:
+    dataset_root = resolve_routerset_dataset_root(root)
+    paths = [dataset_root / "manifest.jsonl", default_rebuilt_manifest_path(root)]
+    for path in paths:
+        rows = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        kept = [row for row in rows if not (row["source_dataset"] == expert and row["source_split"] == split)]
+        path.write_text("\n".join(json.dumps(row) for row in kept) + "\n", encoding="utf-8")
+
+
 class TestMoETraining(unittest.TestCase):
     def test_routerset_helpers(self) -> None:
         row = {
@@ -191,7 +230,7 @@ class TestMoETraining(unittest.TestCase):
             _write_routerset_fixture(root)
             with patch(
                 "hydranet.moe_training.resolve_student_checkpoint_report",
-                return_value={"fire": {"checkpoint_path": "dummy.pt", "training": "finetuning", "n_shots": 5000}},
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
             ):
                 report = preflight_routerset_training(
                     routerset_dir=root,
@@ -204,7 +243,12 @@ class TestMoETraining(unittest.TestCase):
             self.assertEqual(report["release_name"], "phidranet_demo")
             self.assertIn("dataset_report", report)
             self.assertIn("checkpoint_report", report)
+            self.assertTrue((root / "out" / "dataset_report.json").exists())
+            self.assertTrue((root / "out" / "checkpoint_report.json").exists())
             self.assertTrue((root / "out" / "preflight_report.json").exists())
+            checkpoint_report = json.loads((root / "out" / "checkpoint_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(sorted(checkpoint_report), list(DEFAULT_ROUTERSET_EXPERTS))
+            self.assertEqual(checkpoint_report["fire"]["status"], "ok")
 
     def test_preflight_rejects_missing_positive_experts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -220,13 +264,28 @@ class TestMoETraining(unittest.TestCase):
                     release_name="demo",
                 )
 
+    def test_preflight_rejects_missing_required_expert_in_split(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            _drop_manifest_rows(root, expert="roads", split="validation")
+
+            with self.assertRaisesRegex(ValueError, "roads \\(validation\\)"):
+                preflight_routerset_training(
+                    routerset_dir=root,
+                    expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                    target_size=16,
+                    output_dir=root / "out",
+                    release_name="demo",
+                )
+
     def test_preflight_rebuilds_broken_split(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             _write_routerset_fixture(root, broken_fire_validation=True)
             with patch(
                 "hydranet.moe_training.resolve_student_checkpoint_report",
-                return_value={"fire": {"checkpoint_path": "dummy.pt", "training": "finetuning", "n_shots": 5000}},
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
             ):
                 report = preflight_routerset_training(
                     routerset_dir=root,
@@ -240,6 +299,30 @@ class TestMoETraining(unittest.TestCase):
 
             self.assertEqual(report["manifest_path"], str(default_rebuilt_manifest_path(root)))
             self.assertEqual(report["dataset_report"]["validation"]["raw_positive_counts_by_expert"]["fire"], 1)
+
+    def test_preflight_writes_failed_checkpoint_report_before_aborting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+
+            with patch(
+                "hydranet.moe_training.resolve_student_checkpoint_report",
+                return_value=_checkpoint_report(failed_expert="fire", weights_dir=str(root / "weights")),
+            ):
+                with self.assertRaisesRegex(ValueError, "fire from catalog/fire/student.pt"):
+                    preflight_routerset_training(
+                        routerset_dir=root,
+                        expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                        target_size=16,
+                        output_dir=output_dir,
+                        release_name="demo",
+                    )
+
+            checkpoint_report = json.loads((output_dir / "checkpoint_report.json").read_text(encoding="utf-8"))
+            self.assertEqual(checkpoint_report["fire"]["status"], "failed")
+            self.assertEqual(checkpoint_report["roads"]["status"], "ok")
+            self.assertTrue((output_dir / "dataset_report.json").exists())
 
     def test_configure_local_runtime_environment_writes_local_cache_layout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -280,7 +363,7 @@ class TestMoETraining(unittest.TestCase):
             _write_routerset_fixture(root)
             with patch(
                 "hydranet.moe_training.resolve_student_checkpoint_report",
-                return_value={"fire": {"checkpoint_path": "dummy.pt", "training": "finetuning", "n_shots": 5000}},
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
             ), patch("hydranet.moe_training.probe_lightning_import", return_value=None):
                 report = prepare_routerset_training(
                     routerset_dir=root,
@@ -370,7 +453,7 @@ class TestMoETraining(unittest.TestCase):
 
             with patch(
                 "hydranet.moe_training.resolve_student_checkpoint_report",
-                return_value={"fire": {"checkpoint_path": "dummy.pt", "training": "finetuning", "n_shots": 5000}},
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
             ), patch("hydranet.moe_training.probe_lightning_import", return_value=None), patch(
                 "hydranet.moe_training.build_routerset_moe",
                 return_value=FakeModel(),
@@ -441,7 +524,7 @@ class TestMoETraining(unittest.TestCase):
 
             with patch(
                 "hydranet.moe_training.resolve_student_checkpoint_report",
-                return_value={"fire": {"checkpoint_path": "dummy.pt", "training": "finetuning", "n_shots": 5000}},
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
             ), patch("hydranet.moe_training.probe_lightning_import", return_value=None), patch(
                 "hydranet.moe_training.build_routerset_moe",
                 return_value=FakeModel(),
@@ -543,7 +626,7 @@ class TestMoETraining(unittest.TestCase):
 
             with patch(
                 "hydranet.moe_training.resolve_student_checkpoint_report",
-                return_value={"fire": {"checkpoint_path": "dummy.pt", "training": "finetuning", "n_shots": 5000}},
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
             ), patch("hydranet.moe_training.probe_lightning_import", return_value=None) as probe_mock, patch(
                 "hydranet.moe_training.build_routerset_moe",
                 return_value=FakeModel(),

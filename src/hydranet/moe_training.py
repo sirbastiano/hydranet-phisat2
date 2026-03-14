@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import traceback
+from csv import DictReader
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -477,6 +478,34 @@ def resolve_release_name(release_name: Optional[str] = None) -> str:
     return f"phidranet_{suffix}"
 
 
+def _student_checkpoint_catalog_path() -> Path:
+    return Path(__file__).with_name("model_weights.csv")
+
+
+def _select_student_checkpoint_catalog_entry(
+    *,
+    task: str,
+    training: str,
+    n_shots: int,
+) -> Optional[dict[str, str]]:
+    catalog_path = _student_checkpoint_catalog_path()
+    if not catalog_path.exists():
+        return None
+    with catalog_path.open(newline="", encoding="utf-8") as handle:
+        rows = [
+            row
+            for row in DictReader(handle)
+            if row.get("model") == "student"
+            and row.get("task") == task
+            and row.get("training") == training
+            and row.get("n_shots") == str(float(n_shots))
+        ]
+    if not rows:
+        return None
+    rows.sort(key=lambda row: row.get("datetime", ""), reverse=True)
+    return rows[0]
+
+
 def resolve_student_checkpoint_report(
     expert_names: Sequence[str],
     *,
@@ -486,16 +515,43 @@ def resolve_student_checkpoint_report(
 ) -> dict[str, dict[str, Any]]:
     report: dict[str, dict[str, Any]] = {}
     for task in expert_names:
-        report[task] = {
+        catalog_entry = _select_student_checkpoint_catalog_entry(
+            task=task,
+            training=training,
+            n_shots=n_shots,
+        )
+        source_path = catalog_entry["file_path"] if catalog_entry is not None else ""
+        deterministic_path = (
+            str(Path(weights_dir) / source_path)
+            if weights_dir is not None and source_path
+            else ""
+        )
+        item: dict[str, Any] = {
+            "status": "ok",
             "training": training,
             "n_shots": int(n_shots),
-            "checkpoint_path": _resolve_student_checkpoint_path(
+            "catalog_path": str(_student_checkpoint_catalog_path()),
+            "source_path": source_path,
+            "deterministic_path": deterministic_path,
+            "checkpoint_path": "",
+        }
+        try:
+            checkpoint_path = _resolve_student_checkpoint_path(
                 task=task,
                 training=training,
                 n_shots=n_shots,
                 weights_dir=weights_dir,
-            ),
-        }
+            )
+            if not checkpoint_path:
+                raise FileNotFoundError(f"Checkpoint path was empty for expert {task!r}.")
+            item["checkpoint_path"] = checkpoint_path
+            if not item["deterministic_path"]:
+                item["deterministic_path"] = checkpoint_path
+        except BaseException as error:
+            item["status"] = "failed"
+            item["error_type"] = type(error).__name__
+            item["error"] = str(error)
+        report[task] = item
     return report
 
 
@@ -1114,19 +1170,39 @@ def validate_routerset_dataset_report(
     target_channels: int,
 ) -> None:
     expected_shape = f"{target_channels}x{target_size}x{target_size}"
+    empty_splits: List[str] = []
+    missing_records: Dict[str, List[str]] = {}
     missing_positive: Dict[str, List[str]] = {}
     invalid_shapes: Dict[str, Dict[str, Mapping[str, int]]] = {}
 
     for split_name in ("train", "validation"):
         split_report = dataset_report[split_name]
+        if int(split_report.get("num_records", 0)) <= 0:
+            empty_splits.append(split_name)
+        counts = split_report["raw_counts_by_expert"]
         positive_counts = split_report["raw_positive_counts_by_expert"]
         for expert_name in expert_names:
+            if counts.get(expert_name, 0) <= 0:
+                missing_records.setdefault(expert_name, []).append(split_name)
             if positive_counts.get(expert_name, 0) <= 0:
                 missing_positive.setdefault(expert_name, []).append(split_name)
 
         for expert_name, shapes in split_report["training_shapes_by_expert"].items():
             if list(shapes.keys()) != [expected_shape]:
                 invalid_shapes.setdefault(split_name, {})[expert_name] = shapes
+
+    if empty_splits:
+        joined = ", ".join(empty_splits)
+        raise ValueError(f"Routerset manifest produced empty required split(s): {joined}.")
+
+    if missing_records:
+        details = ", ".join(
+            f"{expert} ({'/'.join(splits)})" for expert, splits in sorted(missing_records.items())
+        )
+        raise ValueError(
+            "Routerset manifest is missing required experts in the selected splits: "
+            f"{details}."
+        )
 
     if missing_positive:
         details = ", ".join(
@@ -1142,6 +1218,34 @@ def validate_routerset_dataset_report(
             "Routerset adaptation produced non-canonical training shapes: "
             f"{json.dumps(invalid_shapes, sort_keys=True)}"
         )
+
+
+def validate_student_checkpoint_report(
+    checkpoint_report: Mapping[str, Mapping[str, Any]],
+    *,
+    expert_names: Sequence[str],
+) -> None:
+    missing_entries = [expert for expert in expert_names if expert not in checkpoint_report]
+    if missing_entries:
+        joined = ", ".join(sorted(missing_entries))
+        raise ValueError(f"Checkpoint report is missing required experts: {joined}.")
+
+    failures: List[str] = []
+    for expert_name in expert_names:
+        payload = checkpoint_report[expert_name]
+        if payload.get("status") == "ok" and payload.get("checkpoint_path"):
+            continue
+        source_hint = (
+            str(payload.get("source_path") or "")
+            or str(payload.get("deterministic_path") or "")
+            or str(payload.get("catalog_path") or "")
+        )
+        error = str(payload.get("error") or "checkpoint resolution failed")
+        failures.append(f"{expert_name} from {source_hint}: {error}")
+
+    if failures:
+        details = "; ".join(failures)
+        raise ValueError(f"Missing required expert checkpoint set: {details}")
 
 
 def preflight_routerset_training(
@@ -1163,6 +1267,8 @@ def preflight_routerset_training(
     experts = list(expert_names or DEFAULT_ROUTERSET_EXPERTS)
     active_manifest_path = resolve_routerset_manifest_path(routerset_dir, manifest_path)
     rebuilt_manifest_path = None
+    dataset_report_path = Path(output_dir) / "dataset_report.json" if output_dir is not None else None
+    checkpoint_report_path = Path(output_dir) / "checkpoint_report.json" if output_dir is not None else None
     if rebuild_splits:
         rebuilt_manifest_path = rebuild_routerset_split_manifest(
             routerset_dir,
@@ -1191,6 +1297,11 @@ def preflight_routerset_training(
         n_shots=n_shots,
         weights_dir=weights_dir,
     )
+    if dataset_report_path is not None:
+        save_json(dataset_report_path, dataset_report)
+    if checkpoint_report_path is not None:
+        save_json(checkpoint_report_path, checkpoint_report)
+    validate_student_checkpoint_report(checkpoint_report, expert_names=experts)
     payload = {
         "release_name": resolve_release_name(release_name),
         "routerset_dir": str(routerset_dir),
@@ -1635,6 +1746,7 @@ def train_switcher(
         )
         save_json(checkpoint_report_path, checkpoint_report)
         recorder.mark("checkpoint_report_written", checkpoint_report_path=str(checkpoint_report_path))
+        validate_student_checkpoint_report(checkpoint_report, expert_names=expert_names)
         save_json(
             preflight_report_path,
             {

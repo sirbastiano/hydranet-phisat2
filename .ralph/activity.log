@@ -1,6 +1,7 @@
 # Activity Log
 
 ## Run Summary
+- 2026-03-14 12:14:28 | run=20260314-115146-3579918 | iter=2 | mode=build | story=US-002 | duration=823s | status=success
 - 2026-03-14 12:00:43 | run=20260314-115146-3579918 | iter=1 | mode=build | story=US-001 | duration=537s | status=success
 
 ## Events
@@ -15,3 +16,7 @@
 [2026-03-14 12:04:29] Implemented US-002 full-training orchestration, CLI/Make entrypoint, contract fix, docs, and regression tests
 [2026-03-14 12:09:43] US-002 verification: targeted tests and repo pytest passed; full_train CLI usage verified; ruff has pre-existing unrelated failures; train-prepare timed out in existing Lightning import probe; smoketest reached trainer.fit before termination due runtime
 [2026-03-14 12:13:56] Updated US-002 progress entry with commit and verification details
+[2026-03-14 12:14:28] ITERATION 2 end (duration=823s)
+[2026-03-14 12:14:30] ITERATION 3 start (mode=build story=US-003)
+[2026-03-14 12:18:24] US-003 major code changes applied: preflight now writes standalone dataset/checkpoint reports and checkpoint readiness is reported per expert before aborting
+[2026-03-14 12:23:39] US-003 verification finished: targeted/full pytest passed; smoketest-preflight passed; train-prepare and smoketest failed on existing Lightning import timeout; ruff check failed on pre-existing repo lint issues
