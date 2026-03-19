@@ -6,7 +6,6 @@ RELEASE_NAME ?= smoke_v1
 SMOKE_OUTPUT_DIR ?= outputs/moe/smoke_$(shell date -u +%Y%m%d_%H%M%S)
 ROUTERSET_DIR ?= routerset
 REBUILT_MANIFEST ?= $(ROUTERSET_DIR)/multilabel_dataset/manifest_moe_train.jsonl
-MAX_EPOCHS ?= 20
 TRAIN_OUTPUT_DIR ?= outputs/moe/prepare_$(shell date -u +%Y%m%d_%H%M%S)
 RUNTIME_ROOT ?= $(TRAIN_OUTPUT_DIR)/runtime
 ACCELERATOR ?= cpu
@@ -19,7 +18,7 @@ else
 RUNNER = PYTHONPATH=$(PYTHONPATH) $(MICROMAMBA) run -p $(MICROMAMBA_PREFIX) python
 endif
 
-.PHONY: clean-cache routerset-download train-prepare train full-train smoketest smoketest-preflight
+.PHONY: clean-cache routerset-download train-prepare full-train smoketest smoketest-preflight
 
 clean-cache:
 	rm -rf $(HOME)/.cache/* $(HOME)/.mamba/pkgs $(HOME)/.local/share/mamba/pkgs 2>/dev/null || true
@@ -53,13 +52,9 @@ full-train:
 		--runtime-root $(RUNTIME_ROOT) \
 		--accelerator $(ACCELERATOR) \
 		--devices $(DEVICES) \
-		--max-epochs $(MAX_EPOCHS) \
 		$(if $(PRECISION),--precision $(PRECISION),) \
 		--rebuild-splits \
 		--rebuilt-manifest-out $(REBUILT_MANIFEST)
-
-train:
-	$(MAKE) full-train MAX_EPOCHS=100
 
 smoketest:
 	$(RUNNER) scripts/smoke_test_moe.py \

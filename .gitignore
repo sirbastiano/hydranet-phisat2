@@ -109,6 +109,21 @@ ipython_config.py
 #   https://pdm.fming.dev/#use-with-ide
 .pdm.toml
 
+.ralph
+.agents/
+.codex
+.github/agents/
+.github/skills/
+templates/codex/
+templates/evals/agent-instructions/
+PLANS.md
+howtorun.md
+AGENTS.md
+AGENTS.override.md
+**/AGENTS.md
+**/AGENTS.override.md
+
+
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
 __pypackages__/
 
@@ -211,5 +226,4 @@ wandb/
 temp/
 tmp/
 
-AGENTS.md
 onnx/
