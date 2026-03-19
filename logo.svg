@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">HydraNet logo</title>
+  <desc id="desc">Stylized node-and-network emblem for HydraNet with a circular monogram.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b2545"/>
+      <stop offset="100%" stop-color="#102f66"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#42bff8"/>
+      <stop offset="100%" stop-color="#6ee7ff"/>
+    </linearGradient>
+    <linearGradient id="core" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#66c0ff"/>
+      <stop offset="100%" stop-color="#7fffd4"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="20" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="216" fill="url(#bg)"/>
+
+  <g filter="url(#soft)" opacity="0.2">
+    <path d="M196 744h632l-316-632L196 744Z" fill="#7de2ff"/>
+  </g>
+
+  <g transform="translate(145 145)">
+    <circle cx="367" cy="367" r="250" stroke="url(#ring)" stroke-width="18" fill="none" opacity="0.95"/>
+    <circle cx="367" cy="367" r="198" fill="url(#core)" opacity="0.15"/>
+
+    <line x1="167" y1="567" x2="367" y2="367" stroke="#9de6ff" stroke-width="18" stroke-linecap="round"/>
+    <line x1="567" y1="567" x2="367" y2="367" stroke="#9de6ff" stroke-width="18" stroke-linecap="round"/>
+    <line x1="367" y1="167" x2="367" y2="367" stroke="#9de6ff" stroke-width="18" stroke-linecap="round"/>
+    <line x1="217" y1="417" x2="517" y2="417" stroke="#9de6ff" stroke-width="14" stroke-linecap="round" opacity="0.55"/>
+
+    <circle cx="167" cy="567" r="42" fill="#7fffd4"/>
+    <circle cx="567" cy="567" r="42" fill="#66c0ff"/>
+    <circle cx="367" cy="167" r="42" fill="#a7f3ff"/>
+    <circle cx="367" cy="367" r="52" fill="#f8fafc"/>
+
+    <circle cx="367" cy="367" r="22" fill="#0b2545"/>
+  </g>
+
+  <g transform="translate(130 770)">
+    <text x="382" y="70" text-anchor="middle" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="160" fill="#eaf6ff" font-weight="700" letter-spacing="2">
+      HydraNet
+    </text>
+    <text x="382" y="125" text-anchor="middle" font-family="Inter, 'Segoe UI', Arial, sans-serif" font-size="44" fill="#9ee8ff" letter-spacing="6">
+      MULTI-TASK SATELLITE AI
+    </text>
+  </g>
+</svg>

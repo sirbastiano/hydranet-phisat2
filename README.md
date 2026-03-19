@@ -1,9 +1,24 @@
 # HydraNet
 
-Python package for loading models.
+<p align="center">
+  <img src="logo.svg" alt="HydraNet logo" width="280" height="280" />
+</p>
 
 <p align="center">
-    <img src="logo.png" alt="HydraNet Logo" width="400"/>
+  <strong>Modular multi-task satellite modeling with shared encoders, task experts, and routerset-ready MoE workflows.</strong>
+</p>
+
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img alt="Python version" src="https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white"/></a>
+  <a href="https://pytorch.org/"><img alt="Framework" src="https://img.shields.io/badge/Framework-PyTorch-EE4C2C?logo=pytorch"/></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-blue"/></a>
+  <a href="docs/index.html"><img alt="Docs" src="https://img.shields.io/badge/Docs-View-1f6feb?logo=gitbook"/></a>
+</p>
+
+<p align="center">
+  <a href="#installation"><img alt="Get Started" src="https://img.shields.io/badge/🚀%20Get%20Started-2ea44f?style=for-the-badge&logo=rocket"/></a>
+  <a href="#student-moe-and-phidranet"><img alt="MoE Guide" src="https://img.shields.io/badge/🧠%20MoE%20Guide-0A66C2?style=for-the-badge"/></a>
+  <a href="docs/hydranet_moe_model.html"><img alt="Architecture" src="https://img.shields.io/badge/Diagram%20Guide-6f42c1?style=for-the-badge"/></a>
 </p>
 
 ## Installation
