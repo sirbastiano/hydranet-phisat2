@@ -91,6 +91,8 @@ This repository also includes a routerset-backed student Mixture-of-Experts path
 - one learned routing switcher
 - task-specific student decoder experts
 
+For a simple model overview with diagrams, see [docs/hydranet_moe_model.md](docs/hydranet_moe_model.md).
+
 The default expert set is aligned to routerset:
 
 - `anomaly_detection`
@@ -116,6 +118,7 @@ make smoketest-preflight MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 The canonical dataset root is `routerset/multilabel_dataset/`. The routerset training contract is fixed to `8x256x256`. Large `anomaly_detection` inputs are expanded into deterministic `256x256` tiles, and non-tiled samples are never resized: tensors larger than `256` are cut out deterministically and tensors smaller than `256` are zero-padded after channel normalization. The preflight step now fails if any selected expert has zero positive samples in either the train or validation split, which means routerset must be rebuilt before a canonical six-expert run if a task is missing positives.
 
 The `--prepare-only` path is now the canonical training-readiness step. It configures a local runtime/cache root, writes `runtime_environment.json`, prefetches the six expert checkpoints into a local weights directory, runs the dataset/checkpoint preflight, and executes a startup gate that loads one routerset sample and probes Lightning import before any fit starts.
+The checked-in CLI defaults now use a `120` second startup-gate timeout because cold Lightning imports in this environment can exceed one minute.
 
 Canonical environment presets for the `make` targets:
 
