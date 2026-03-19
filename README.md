@@ -91,7 +91,7 @@ This repository also includes a routerset-backed student Mixture-of-Experts path
 - one learned routing switcher
 - task-specific student decoder experts
 
-For a simple model overview with diagrams, see [docs/hydranet_moe_model.md](docs/hydranet_moe_model.md).
+For a simple model overview with diagrams, see [docs/hydranet_moe_model.html](docs/hydranet_moe_model.html).
 
 The default expert set is aligned to routerset:
 

@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HydraNet MoE Model</title>
+  <style>
+    :root {
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --text: #102033;
+      --muted: #526274;
+      --line: #d6dee8;
+      --accent: #245ea8;
+      --accent-soft: #eaf2ff;
+      --success: #1f7a4d;
+      --shadow: 0 18px 50px rgba(16, 32, 51, 0.08);
+      --radius: 18px;
+      --content: 1040px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(180deg, #edf4ff 0%, var(--bg) 28%, #ffffff 100%);
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    a { color: var(--accent); }
+
+    .wrap {
+      width: min(calc(100% - 32px), var(--content));
+      margin: 0 auto;
+    }
+
+    .hero {
+      padding: 56px 0 24px;
+    }
+
+    .hero-card,
+    .section-card,
+    .nav-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-card {
+      padding: 32px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.15;
+      margin: 0 0 12px;
+    }
+
+    h1 {
+      margin-top: 18px;
+      font-size: clamp(32px, 5vw, 52px);
+    }
+
+    h2 {
+      font-size: clamp(24px, 3vw, 32px);
+    }
+
+    p {
+      margin: 0 0 14px;
+      color: var(--muted);
+    }
+
+    .topnav {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 20px;
+    }
+
+    .topnav a,
+    .jump a {
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .topnav a {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: #f7faff;
+      border: 1px solid var(--line);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
+      gap: 24px;
+      padding: 12px 0 48px;
+    }
+
+    .nav-card {
+      padding: 20px;
+      position: sticky;
+      top: 20px;
+      align-self: start;
+    }
+
+    .jump {
+      display: grid;
+      gap: 10px;
+    }
+
+    .jump a {
+      padding: 10px 12px;
+      border-radius: 12px;
+      color: var(--text);
+      background: #f8fbff;
+      border: 1px solid transparent;
+    }
+
+    .jump a:hover {
+      border-color: var(--line);
+      background: #eef5ff;
+    }
+
+    main {
+      display: grid;
+      gap: 20px;
+    }
+
+    .section-card {
+      padding: 28px;
+    }
+
+    .callout {
+      padding: 16px 18px;
+      border-radius: 14px;
+      background: #f7fbf8;
+      border: 1px solid #cde6d7;
+      color: #184a30;
+      margin-top: 12px;
+    }
+
+    .figure {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .figure figcaption {
+      padding: 14px 16px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    ol, ul {
+      margin: 0;
+      padding-left: 22px;
+      color: var(--muted);
+    }
+
+    li + li {
+      margin-top: 8px;
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.92em;
+      background: #f3f6fa;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 1px 6px;
+      color: #15314f;
+    }
+
+    .grid-two {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .mini-card {
+      padding: 16px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: #fbfdff;
+    }
+
+    .mini-card h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .footer {
+      padding: 0 0 48px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 900px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .nav-card {
+        position: static;
+      }
+
+      .grid-two {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <div class="hero-card">
+        <span class="eyebrow">HydraNet Docs</span>
+        <h1>HydraNet MoE Model</h1>
+        <p>
+          A plain-language explanation of the HydraNet student Mixture-of-Experts model:
+          what pieces it has, how routing works, and how the switcher is trained.
+        </p>
+        <div class="topnav">
+          <a href="index.html">Back to Repository Docs</a>
+          <a href="#topology">Topology</a>
+          <a href="#flow">Training Flow</a>
+          <a href="#pointers">Code Pointers</a>
+        </div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="nav-card">
+        <h2>On This Page</h2>
+        <div class="jump">
+          <a href="#summary">Quick Summary</a>
+          <a href="#topology">Topology</a>
+          <a href="#works">How It Works</a>
+          <a href="#flow">Training Flow</a>
+          <a href="#why">Why This Design Exists</a>
+          <a href="#pointers">Code Pointers</a>
+        </div>
+      </aside>
+
+      <main>
+        <section id="summary" class="section-card">
+          <h2>Quick Summary</h2>
+          <p>The model has three main parts:</p>
+          <ol>
+            <li>A shared encoder reads the satellite image once and turns it into compact features.</li>
+            <li>A routing switcher looks at those features and predicts which expert tasks are relevant.</li>
+            <li>Task-specific expert decoders produce the final task outputs, such as fire or roads.</li>
+          </ol>
+          <div class="callout">
+            The expensive visual feature extraction is shared, while the task-specific behavior lives in separate experts.
+          </div>
+        </section>
+
+        <section id="topology" class="section-card">
+          <h2>Topology</h2>
+          <p>
+            The shared encoder extracts common features once, the switcher predicts expert scores, and the top experts decode the output.
+          </p>
+          <figure class="figure">
+            <img src="assets/hydranet-moe-topology.png" alt="HydraNet MoE topology diagram">
+            <figcaption>
+              Editable Figma diagram:
+              <a href="https://www.figma.com/online-whiteboard/create-diagram/c89a76e4-c1a6-49ef-831d-c1b283071c20?utm_source=chatgpt&utm_content=edit_in_figjam&oai_id=&request_id=4433acc0-14e8-42f6-b7c8-cbb46196b655">HydraNet MoE Topology</a>
+            </figcaption>
+          </figure>
+        </section>
+
+        <section id="works" class="section-card">
+          <h2>How It Works</h2>
+          <ol>
+            <li>The input is an 8-channel satellite image.</li>
+            <li>The shared encoder extracts a common feature representation.</li>
+            <li>The switcher predicts a score for each expert.</li>
+            <li>The model keeps the top-k experts with the strongest routing scores.</li>
+            <li>Those experts decode the shared features into task-specific outputs.</li>
+          </ol>
+          <p>
+            In practice, one sample can activate different experts depending on what the image contains.
+          </p>
+        </section>
+
+        <section id="flow" class="section-card">
+          <h2>Training Flow</h2>
+          <p>
+            Training uses routerset samples and multi-label routing targets so the switcher learns which expert heads should activate.
+          </p>
+          <figure class="figure">
+            <img src="assets/hydranet-moe-training-flow.png" alt="HydraNet MoE training flow diagram">
+            <figcaption>
+              Editable Figma diagram:
+              <a href="https://www.figma.com/online-whiteboard/create-diagram/fedddbbb-1fb3-4c8c-86a9-c08687ff8cbf?utm_source=chatgpt&utm_content=edit_in_figjam&oai_id=&request_id=ca74116c-dc05-41ee-9d29-776b244b0264">HydraNet MoE Training Flow</a>
+            </figcaption>
+          </figure>
+          <div class="grid-two">
+            <div class="mini-card">
+              <h3>Data Preparation</h3>
+              <ol>
+                <li>Routerset samples are normalized and tiled into the fixed <code>8x256x256</code> shape.</li>
+                <li>Each sample gets a multi-label routing target saying which experts should activate.</li>
+              </ol>
+            </div>
+            <div class="mini-card">
+              <h3>Optimization</h3>
+              <ol>
+                <li>The switcher predicts routing logits from the encoder bottleneck.</li>
+                <li>A BCE loss compares predicted expert activations against the routing target.</li>
+                <li>The current setup trains the switcher while keeping the encoder and expert decoders frozen.</li>
+              </ol>
+            </div>
+          </div>
+        </section>
+
+        <section id="why" class="section-card">
+          <h2>Why This Design Exists</h2>
+          <ul>
+            <li>It avoids running a separate full model for every task.</li>
+            <li>It keeps a shared visual backbone across tasks.</li>
+            <li>It still allows task specialization through expert decoders.</li>
+            <li>It makes routing explicit, so expert selection is inspectable.</li>
+          </ul>
+        </section>
+
+        <section id="pointers" class="section-card">
+          <h2>Code Pointers</h2>
+          <ul>
+            <li>Model assembly: <code>src/hydranet/models/moe_student.py</code></li>
+            <li>Training wrapper: <code>src/hydranet/moe_lightning.py</code></li>
+            <li>End-to-end training entrypoint: <code>scripts/full_train_moe.py</code></li>
+            <li>Train-only switcher entrypoint: <code>scripts/train_moe_switcher.py</code></li>
+          </ul>
+        </section>
+      </main>
+    </div>
+
+    <div class="footer wrap">
+      Static HTML page. No docs generator is required to view this file.
+    </div>
+  </div>
+</body>
+</html>

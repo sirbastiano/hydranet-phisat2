@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HydraNet Repository Docs</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --text: #102033;
+      --muted: #536273;
+      --line: #d6dee8;
+      --accent: #245ea8;
+      --accent-soft: #eaf2ff;
+      --accent-2: #1f7a4d;
+      --shadow: 0 18px 50px rgba(16, 32, 51, 0.08);
+      --radius: 18px;
+      --content: 1120px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(36, 94, 168, 0.12), transparent 30%),
+        radial-gradient(circle at top right, rgba(31, 122, 77, 0.10), transparent 26%),
+        var(--bg);
+      line-height: 1.6;
+    }
+
+    a { color: var(--accent); }
+
+    .wrap {
+      width: min(calc(100% - 32px), var(--content));
+      margin: 0 auto;
+    }
+
+    .hero {
+      padding: 56px 0 26px;
+    }
+
+    .hero-card, .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-card {
+      padding: 34px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    h1, h2, h3 { line-height: 1.15; margin: 0 0 12px; }
+
+    h1 { font-size: clamp(34px, 5vw, 56px); margin-top: 18px; }
+    h2 { font-size: clamp(24px, 3vw, 34px); }
+    h3 { font-size: 20px; }
+
+    p {
+      margin: 0 0 14px;
+      color: var(--muted);
+    }
+
+    .hero-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .hero-links a {
+      text-decoration: none;
+      font-weight: 700;
+      padding: 11px 16px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #f7faff;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 20px;
+      padding-bottom: 48px;
+    }
+
+    .span-12 { grid-column: span 12; }
+    .span-6 { grid-column: span 6; }
+    .span-4 { grid-column: span 4; }
+
+    .card { padding: 28px; }
+
+    .pill-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .pill {
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: #f8fbff;
+      color: var(--text);
+      font-weight: 600;
+      font-size: 14px;
+    }
+
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }
+
+    .mini {
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fbfdff;
+    }
+
+    ul, ol {
+      margin: 0;
+      padding-left: 22px;
+      color: var(--muted);
+    }
+
+    li + li { margin-top: 8px; }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.92em;
+      background: #f3f6fa;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 1px 6px;
+      color: #15314f;
+    }
+
+    .callout {
+      margin-top: 16px;
+      padding: 16px 18px;
+      border-radius: 14px;
+      background: #f6fbf7;
+      border: 1px solid #cfe7d8;
+      color: #184a30;
+    }
+
+    @media (max-width: 980px) {
+      .span-6,
+      .span-4 {
+        grid-column: span 12;
+      }
+
+      .card-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <div class="hero-card">
+        <span class="eyebrow">HydraNet Docs</span>
+        <h1>HydraNet Repository Overview</h1>
+        <p>
+          HydraNet is a repository for loading, training, and exporting student and teacher models,
+          including a routerset-backed Mixture-of-Experts path called <code>phidranet</code>.
+        </p>
+        <div class="hero-links">
+          <a href="hydranet_moe_model.html">Open the MoE Model Guide</a>
+          <a href="../README.md">Open README</a>
+        </div>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="card span-12">
+        <h2>What This Repository Contains</h2>
+        <div class="pill-list">
+          <span class="pill">Student model loading</span>
+          <span class="pill">Teacher model loading</span>
+          <span class="pill">MoE switcher training</span>
+          <span class="pill">Full training and export</span>
+          <span class="pill">Routerset data preparation</span>
+          <span class="pill">ONNX export utilities</span>
+        </div>
+      </article>
+
+      <article class="card span-6">
+        <h2>Main Model Paths</h2>
+        <div class="card-grid">
+          <div class="mini">
+            <h3>Student</h3>
+            <p>The default student path loads the HydraNet student model and its preset variants.</p>
+          </div>
+          <div class="mini">
+            <h3>Teacher</h3>
+            <p>The teacher path loads PhiSatNet-style downstream models for supervised tasks.</p>
+          </div>
+          <div class="mini">
+            <h3>MoE Student</h3>
+            <p>The MoE path shares one encoder, uses a routing switcher, and activates task-specific decoder experts.</p>
+          </div>
+          <div class="mini">
+            <h3>Export</h3>
+            <p>Scripts support export workflows such as ONNX conversion and packaged bundle generation.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="card span-6">
+        <h2>Key Directories</h2>
+        <ul>
+          <li><code>src/hydranet/</code>: package entrypoints, loading helpers, and training orchestration</li>
+          <li><code>src/hydranet/models/</code>: model definitions for student, teacher, and MoE components</li>
+          <li><code>scripts/</code>: train, smoke-test, export, and inference entrypoints</li>
+          <li><code>routerset/</code>: dataset manifests and routerset-specific docs</li>
+          <li><code>tests/</code>: regression coverage for training and helpers</li>
+          <li><code>docs/</code>: static documentation pages and diagrams</li>
+        </ul>
+      </article>
+
+      <article class="card span-6">
+        <h2>Common Workflows</h2>
+        <ol>
+          <li>Install or activate the Python environment.</li>
+          <li>Load a student or teacher model for inference.</li>
+          <li>Prepare the routerset dataset and runtime caches for MoE work.</li>
+          <li>Run preflight or smoke tests before longer training runs.</li>
+          <li>Train the MoE switcher or launch the full train/export flow.</li>
+        </ol>
+        <div class="callout">
+          The README remains the source of truth for the concrete commands and environment variables.
+        </div>
+      </article>
+
+      <article class="card span-6">
+        <h2>Important Entry Points</h2>
+        <ul>
+          <li><code>scripts/train_moe_switcher.py</code>: train-only switcher entrypoint</li>
+          <li><code>scripts/full_train_moe.py</code>: full training plus export orchestration</li>
+          <li><code>scripts/smoke_test_moe.py</code>: faster functional end-to-end smoke path</li>
+          <li><code>scripts/export_onnx.py</code>: ONNX export helper</li>
+          <li><code>src/hydranet/loading.py</code>: public loading helpers</li>
+        </ul>
+      </article>
+
+      <article class="card span-12">
+        <h2>Mixture-of-Experts Overview</h2>
+        <p>
+          The MoE path is the most specialized workflow in this repository. It combines one shared encoder,
+          one learned routing switcher, and multiple task-specific decoder experts aligned to routerset.
+        </p>
+        <p>
+          If you want the model topology, routing behavior, and training explanation in one place,
+          open the dedicated model page:
+        </p>
+        <p><a href="hydranet_moe_model.html">HydraNet MoE Model Guide</a></p>
+      </article>
+    </section>
+  </div>
+</body>
+</html>
