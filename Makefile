@@ -18,7 +18,9 @@ else
 RUNNER = PYTHONPATH=$(PYTHONPATH) $(MICROMAMBA) run -p $(MICROMAMBA_PREFIX) python
 endif
 
-.PHONY: clean-cache routerset-download train-prepare full-train smoketest smoketest-preflight
+.PHONY: clean-cache routerset-download routerset-materialize routerset-materialize-clean routerset-audit train-prepare full-train smoketest smoketest-preflight
+MATERIALIZED_DATASET_DIR ?= outputs/routerset/materialized_256
+MATERIALIZED_CLEAN_DATASET_DIR ?= outputs/routerset/materialized_256_clean
 
 clean-cache:
 	rm -rf $(HOME)/.cache/* $(HOME)/.mamba/pkgs $(HOME)/.local/share/mamba/pkgs 2>/dev/null || true
@@ -30,6 +32,21 @@ clean-cache:
 
 routerset-download:
 	$(RUNNER) scripts/download_routerset.py --local-dir $(ROUTERSET_DIR)
+
+routerset-materialize:
+	$(RUNNER) scripts/materialize_routerset_dataset.py \
+		--routerset-dir $(ROUTERSET_DIR) \
+		--output-dir $(MATERIALIZED_DATASET_DIR)
+
+routerset-materialize-clean:
+	$(RUNNER) scripts/materialize_routerset_dataset.py \
+		--routerset-dir $(ROUTERSET_DIR) \
+		--output-dir $(MATERIALIZED_CLEAN_DATASET_DIR) \
+		--clean
+
+routerset-audit:
+	$(RUNNER) scripts/audit_routerset_dataset.py \
+		--dataset-root $(MATERIALIZED_DATASET_DIR)
 
 train-prepare:
 	$(RUNNER) scripts/train_moe_switcher.py \

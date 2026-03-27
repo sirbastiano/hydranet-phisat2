@@ -31,6 +31,7 @@ viewer: false
 - `multilabel_dataset/plots/`: dataset analysis graphs
 
 The repo is intentionally minimal. Redundant root-level metadata copies and training-ready derivative exports were removed.
+When local compatibility copies still exist at the dataset root, `multilabel_dataset/` remains canonical and rebuilt manifests are synchronized from that source of truth.
 
 ## Current snapshot
 
@@ -79,3 +80,8 @@ The dataset graphs are stored in `multilabel_dataset/plots/`:
 
 - Arrays are stored as `.npy` materializations.
 - The dataset was built from the current local `phi2FM` downstream sources and then uploaded to this Hugging Face dataset repository.
+- A corrected canonical `8x256x256` export for local training and audit can be generated with `make routerset-materialize`, which writes to `outputs/routerset/materialized_256/` by default.
+- A clean variant can be generated with `make routerset-materialize-clean`, which writes `manifest_256.jsonl`, `fault_rows_256.jsonl`, and `fault_report.json` under `outputs/routerset/materialized_256_clean/` by default.
+- A full tile-by-tile audit can be generated with `make routerset-audit MATERIALIZED_DATASET_DIR=outputs/routerset/fix27March`, which writes `audit/tile_audit.jsonl`, `audit/audit_summary.json`, and RGB / false-RGB plot previews under that dataset root.
+- The clean export only removes objective row-level artifact faults such as all-zero materialized tiles. Split-level problems, for example `fire` validation having no positive rows, stay reported as blockers instead of being rewritten silently.
+- The dedicated notebook for the rebuilt `fix27March` artifact is `notebooks/routerset_fix27March_audit.ipynb`.

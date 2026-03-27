@@ -81,6 +81,7 @@ model = hydranet.load_student(
     n_shots=5000,
     training='linear_probing',
     auto_load_weights=True,
+    checkpoint_selection='best',  # Select by HF artifacts metrics instead of newest-only
     weights_dir='../weights',
     strict=False             # Allows task-specific head mismatches
 )
@@ -114,8 +115,9 @@ The default expert set is aligned to routerset:
 - `burned_area`
 - `fire`
 - `lc`
-- `roads`
 - `worldfloods`
+
+`roads` is currently excluded from the default expert set because the available downstream checkpoints are under audit. If needed, include it explicitly with `--experts`.
 
 Recommended workflow:
 
@@ -125,12 +127,56 @@ export MAMBA_ROOT_PREFIX=/tmp/micromamba-hydranet-root
 export MICROMAMBA_PREFIX=/tmp/hydranet-phisat2-mamba
 
 make routerset-download MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
+make routerset-materialize MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
+make routerset-materialize-clean MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
+make routerset-audit MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX MATERIALIZED_DATASET_DIR=outputs/routerset/fix27March
 make clean-cache MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 make train-prepare MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 make smoketest-preflight MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 ```
 
-The canonical dataset root is `routerset/multilabel_dataset/`. The routerset training contract is fixed to `8x256x256`. Large `anomaly_detection` inputs are expanded into deterministic `256x256` tiles, and non-tiled samples are never resized: tensors larger than `256` are cut out deterministically and tensors smaller than `256` are zero-padded after channel normalization. The preflight step now fails if any selected expert has zero positive samples in either the train or validation split, which means routerset must be rebuilt before a canonical six-expert run if a task is missing positives.
+The canonical dataset root is `routerset/multilabel_dataset/`. The routerset training contract is fixed to `8x256x256`. Large `anomaly_detection` inputs are expanded into deterministic `256x256` tiles. Non-tiled tensors larger than `256` are cut out deterministically, and non-tiled tensors smaller than `256` are zero-padded after channel normalization. Raw `roads` and `lc` tiles now follow the original Phi2FM student preprocessing contract before padding: Sentinel-2 bands are mapped into the 8-channel student layout and scaled by `1/10000`. The preflight `dataset_report.json` now exposes per-expert normalization modes, compatibility-path source-record counts, and sampled true raw shapes and value-range stats for manifest-shaped rows so swapped-coordinate tile fallbacks and manifest-shape assumptions are visible.
+
+For a concrete corrected dataset export, use:
+
+```bash
+make routerset-materialize \
+  MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX \
+  MATERIALIZED_DATASET_DIR=outputs/routerset/materialized_256
+```
+
+This writes a canonical dataset artifact under `outputs/routerset/materialized_256/` with:
+
+- `manifest_256.jsonl`
+- `images/<expert>/<split>/*.npy`
+- `materialization_summary.json`
+- `dataset_report.json`
+- `label_vocab.json` when present upstream
+
+For a clean export that drops objective row-level artifact faults such as all-zero materialized tiles and writes an explicit fault audit, use:
+
+```bash
+make routerset-materialize-clean \
+  MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX \
+  MATERIALIZED_CLEAN_DATASET_DIR=outputs/routerset/materialized_256_clean
+```
+
+The clean export writes `fault_rows_256.jsonl` and `fault_report.json` next to the manifest. It does not invent labels or silently repair split semantics, so unresolved blockers such as `fire` validation having zero positive rows remain reported in `fault_report.json`.
+
+For a full file-by-file audit over a materialized export, use:
+
+```bash
+make routerset-audit \
+  MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX \
+  MATERIALIZED_DATASET_DIR=outputs/routerset/fix27March
+```
+
+This writes `audit/tile_audit.jsonl`, `audit/audit_summary.json`, and plot artifacts under the selected dataset root.
+
+Inspection notebooks:
+
+- [notebooks/routerset_materialized_inspection.ipynb](notebooks/routerset_materialized_inspection.ipynb)
+- [notebooks/routerset_fix27March_audit.ipynb](notebooks/routerset_fix27March_audit.ipynb)
 
 The `--prepare-only` path is now the canonical training-readiness step. It configures a local runtime/cache root, writes `runtime_environment.json`, prefetches the six expert checkpoints into a local weights directory, runs the dataset/checkpoint preflight, and executes a startup gate that loads one routerset sample and probes Lightning import before any fit starts.
 The checked-in CLI defaults now use a `120` second startup-gate timeout because cold Lightning imports in this environment can exceed one minute.

@@ -1,27 +1,36 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional
 from unittest.mock import patch
 
 import numpy as np
+import torch
 
 from hydranet.moe_training import (
     DEFAULT_ROUTERSET_EXPERTS,
     FULL_TRAINING_STAGES,
+    _reduce_expert_output_to_routing_score,
     build_artifact_layout,
+    build_routerset_training_tensor,
     configure_local_runtime_environment,
     default_rebuilt_manifest_path,
+    generate_routerset_routing_targets,
     MoESwitcherLightningModule,
+    legacy_root_rebuilt_manifest_path,
     prepare_routerset_training,
     RoutersetMoEDataModule,
     RoutersetMoEDataset,
     create_phidranet_release,
+    materialize_routerset_dataset,
+    materialize_routerset_training_manifest,
     normalize_routerset_array,
     preflight_routerset_training,
     probe_lightning_import,
@@ -70,7 +79,12 @@ def _row(
     }
 
 
-def _write_routerset_fixture(root: Path, *, broken_fire_validation: bool = False) -> None:
+def _write_routerset_fixture(
+    root: Path,
+    *,
+    broken_fire_validation: bool = False,
+    all_zero_worldfloods_train: bool = False,
+) -> None:
     dataset_root = resolve_routerset_dataset_root(root)
     rows = [
         _row("fire", "0000001", "train", labels=["active_fire"]),
@@ -98,6 +112,8 @@ def _write_routerset_fixture(root: Path, *, broken_fire_validation: bool = False
             arr = np.random.randint(0, 1000, size=(16, 16, 10), dtype=np.uint16)
         elif src == "anomaly_detection":
             arr = np.random.randn(8, 32, 32).astype(np.float32)
+        elif src == "worldfloods" and all_zero_worldfloods_train and row["source_split"] == "train":
+            arr = np.zeros((8, 16, 16), dtype=np.float32)
         else:
             arr = np.random.randn(8, 16, 16).astype(np.float32)
         np.save(image_path, arr)
@@ -108,7 +124,33 @@ def _write_routerset_fixture(root: Path, *, broken_fire_validation: bool = False
     dataset_root.mkdir(parents=True, exist_ok=True)
     manifest_text = "\n".join(json.dumps(row) for row in rows) + "\n"
     (dataset_root / "manifest.jsonl").write_text(manifest_text, encoding="utf-8")
+    (dataset_root / "label_vocab.json").write_text(json.dumps({"labels": sorted({label for row in rows for label in row["label_names"]})}), encoding="utf-8")
     default_rebuilt_manifest_path(root).write_text(manifest_text, encoding="utf-8")
+
+
+def _inject_non_finite_routerset_sample(
+    root: Path,
+    *,
+    source_dataset: str,
+    source_split: str,
+    source_sample_id: str,
+) -> None:
+    row = {
+        "source_dataset": source_dataset,
+        "source_split": source_split,
+        "source_sample_id": source_sample_id,
+        "patch_x": 0,
+        "patch_y": 0,
+        "patch_width": None,
+        "patch_height": None,
+    }
+    image_path = routerset_image_path(root, row)
+    array = np.load(image_path)
+    array = array.copy()
+    array[..., 0, 0] = np.nan
+    array[..., 0, 1] = np.inf
+    array[..., 0, 2] = -np.inf
+    np.save(image_path, array)
 
 
 def _checkpoint_report(
@@ -173,6 +215,52 @@ def _write_mock_training_artifacts(output_dir: Path, release_dir: Path) -> None:
     (release_dir / "release_manifest.json").write_text("{}", encoding="utf-8")
 
 
+def _set_fixture_marker(root: Path, row: Dict[str, object], value: float) -> None:
+    image_path = routerset_image_path(root, row)
+    array = np.load(image_path)
+    array = np.asarray(array).copy()
+    array.reshape(-1)[0] = value
+    np.save(image_path, array)
+
+
+class _FakeExpertModel(torch.nn.Module):
+    def __init__(self, *, score_by_marker: Dict[int, float], single_channel: bool = False) -> None:
+        super().__init__()
+        self.score_by_marker = {int(key): float(value) for key, value in score_by_marker.items()}
+        self.single_channel = bool(single_channel)
+
+    @staticmethod
+    def _logit(probability: float) -> float:
+        probability = min(max(float(probability), 1e-4), 1.0 - 1e-4)
+        return float(np.log(probability / (1.0 - probability)))
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        marker = int(round(float(inputs[0, 0, 0, 0].detach().cpu().item())))
+        probability = self.score_by_marker.get(marker, 0.05)
+        height, width = int(inputs.shape[-2]), int(inputs.shape[-1])
+        if self.single_channel:
+            logit = self._logit(probability)
+            return torch.full((inputs.shape[0], 1, height, width), logit, dtype=inputs.dtype, device=inputs.device)
+        bg_logit = 0.0
+        fg_logit = self._logit(probability)
+        logits = torch.zeros((inputs.shape[0], 2, height, width), dtype=inputs.dtype, device=inputs.device)
+        logits[:, 0, :, :] = bg_logit
+        logits[:, 1, :, :] = fg_logit
+        return logits
+
+
+class _FakeLoadingModule:
+    def __init__(self, *, save_bundle_side_effect=None) -> None:
+        self._save_bundle_side_effect = save_bundle_side_effect
+
+    def save_student_moe_bundle(self, model, output_path, metadata=None) -> Path:
+        if self._save_bundle_side_effect is not None:
+            return self._save_bundle_side_effect(model, output_path, metadata=metadata)
+        path = Path(output_path)
+        path.write_bytes(b"bundle")
+        return path
+
+
 class TestMoETraining(unittest.TestCase):
     def test_routerset_helpers(self) -> None:
         row = {
@@ -191,6 +279,250 @@ class TestMoETraining(unittest.TestCase):
             )
         )
 
+    def test_routerset_image_path_uses_swapped_tile_compatibility_for_materialized_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            dataset_root = resolve_routerset_dataset_root(root)
+            row = {
+                "source_dataset": "burned_area",
+                "source_split": "train",
+                "source_sample_id": "0000010",
+                "patch_x": 0,
+                "patch_y": 16,
+                "patch_width": 16,
+                "patch_height": 16,
+            }
+            swapped_path = dataset_root / "images" / "burned_area" / "train" / "0000010_16_0_16_16.npy"
+            swapped_path.parent.mkdir(parents=True, exist_ok=True)
+            np.save(swapped_path, np.random.randn(7, 16, 16).astype(np.float32))
+
+            self.assertEqual(routerset_patch_token(row), "0000010_0_16_16_16.npy")
+            self.assertEqual(routerset_image_path(root, row), swapped_path)
+
+    def test_routerset_image_path_prefers_materialized_image_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            materialized = root / "runtime" / "routerset_materialized" / "images" / "fire" / "train" / "tile.npy"
+            materialized.parent.mkdir(parents=True, exist_ok=True)
+            np.save(materialized, np.random.randn(8, 16, 16).astype(np.float32))
+            row = {
+                "source_dataset": "fire",
+                "source_split": "train",
+                "source_sample_id": "0000010",
+                "patch_x": 0,
+                "patch_y": 0,
+                "patch_width": 16,
+                "patch_height": 16,
+                "materialized_image_path": str(materialized),
+            }
+
+            self.assertEqual(routerset_image_path(root, row), materialized)
+
+    def test_materialize_routerset_training_manifest_tiles_oversized_arrays_on_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            runtime_root = root / "runtime"
+
+            manifest_path = materialize_routerset_training_manifest(
+                routerset_dir=root,
+                manifest_path=resolve_routerset_dataset_root(root) / "manifest.jsonl",
+                materialization_root=runtime_root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                target_size=16,
+                target_channels=8,
+            )
+
+            rows = [
+                json.loads(line)
+                for line in manifest_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            anomaly_train_rows = [
+                row
+                for row in rows
+                if row["source_dataset"] == "anomaly_detection" and row["source_split"] == "train"
+            ]
+
+            self.assertEqual(len(anomaly_train_rows), 4)
+            self.assertTrue(all(row["patch_width"] == 16 for row in anomaly_train_rows))
+            self.assertTrue(all(row["patch_height"] == 16 for row in anomaly_train_rows))
+            self.assertTrue(all("materialized_image_path" in row for row in anomaly_train_rows))
+            for row in anomaly_train_rows:
+                tile = np.load(Path(row["materialized_image_path"]))
+                self.assertEqual(tile.shape, (8, 16, 16))
+
+    def test_materialize_routerset_training_manifest_skips_smaller_patches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            runtime_root = root / "runtime"
+
+            manifest_path = materialize_routerset_training_manifest(
+                routerset_dir=root,
+                manifest_path=resolve_routerset_dataset_root(root) / "manifest.jsonl",
+                materialization_root=runtime_root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                target_size=16,
+                target_channels=8,
+            )
+
+            rows = [
+                json.loads(line)
+                for line in manifest_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            burned_area_train = next(
+                row
+                for row in rows
+                if row["source_dataset"] == "burned_area" and row["source_split"] == "train"
+            )
+
+            self.assertEqual(burned_area_train["patch_width"], 16)
+            self.assertEqual(burned_area_train["patch_height"], 16)
+            self.assertNotIn("materialized_image_path", burned_area_train)
+
+    def test_materialize_routerset_training_manifest_normalizes_fire_metadata_without_rewriting(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            runtime_root = root / "runtime"
+
+            manifest_path = materialize_routerset_training_manifest(
+                routerset_dir=root,
+                manifest_path=resolve_routerset_dataset_root(root) / "manifest.jsonl",
+                materialization_root=runtime_root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                target_size=16,
+                target_channels=8,
+            )
+
+            rows = [
+                json.loads(line)
+                for line in manifest_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            fire_train = next(
+                row
+                for row in rows
+                if row["source_dataset"] == "fire" and row["source_split"] == "train"
+            )
+
+            self.assertEqual(fire_train["patch_width"], 16)
+            self.assertEqual(fire_train["patch_height"], 16)
+            self.assertIn("materialized_image_path", fire_train)
+            self.assertTrue(Path(fire_train["materialized_image_path"]).exists())
+
+    def test_materialize_routerset_dataset_writes_full_npy_export_for_small_patches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            export_root = root / "materialized_16"
+
+            summary = materialize_routerset_dataset(
+                routerset_dir=root,
+                output_dir=export_root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                target_size=16,
+                target_channels=8,
+            )
+
+            manifest_path = export_root / "manifest_16.jsonl"
+            self.assertEqual(summary["status"], "materialized")
+            self.assertEqual(summary["manifest_path"], str(manifest_path))
+            self.assertTrue(manifest_path.exists())
+            self.assertTrue((export_root / "dataset_report.json").exists())
+            self.assertTrue((export_root / "materialization_summary.json").exists())
+            self.assertTrue((export_root / "label_vocab.json").exists())
+
+            rows = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(rows), 19)
+            self.assertTrue(all("materialized_image_path" in row for row in rows))
+            self.assertEqual(summary["materialized_unique_file_count"], 19)
+            self.assertEqual(summary["materialization_summary"]["single_file_source_rows"], 11)
+            self.assertEqual(summary["materialization_summary"]["tiled_source_rows"], 2)
+
+            burned_area_train = next(
+                row
+                for row in rows
+                if row["source_dataset"] == "burned_area" and row["source_split"] == "train"
+            )
+            roads_train = next(
+                row
+                for row in rows
+                if row["source_dataset"] == "roads" and row["source_split"] == "train"
+            )
+            burned_area_tile = np.load(Path(burned_area_train["materialized_image_path"]))
+            roads_tile = np.load(Path(roads_train["materialized_image_path"]))
+            self.assertEqual(tuple(burned_area_tile.shape), (8, 16, 16))
+            self.assertEqual(tuple(roads_tile.shape), (8, 16, 16))
+            self.assertEqual(float(roads_tile[3].sum()), 0.0)
+            self.assertTrue(np.isfinite(roads_tile).all())
+
+    def test_materialize_routerset_dataset_does_not_require_training_ready_positive_splits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root, broken_fire_validation=True)
+            export_root = root / "materialized_16"
+
+            summary = materialize_routerset_dataset(
+                routerset_dir=root,
+                output_dir=export_root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                target_size=16,
+                target_channels=8,
+            )
+
+            self.assertEqual(summary["status"], "materialized")
+            self.assertTrue((export_root / "manifest_16.jsonl").exists())
+            self.assertFalse(summary["fault_report"]["training_ready"])
+            self.assertIn(
+                {"code": "missing_positive_rows", "count": 0, "expert": "fire", "split": "validation"},
+                summary["fault_report"]["training_blockers"],
+            )
+
+    def test_materialize_routerset_dataset_clean_excludes_all_zero_tiles_and_writes_fault_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(
+                root,
+                broken_fire_validation=True,
+                all_zero_worldfloods_train=True,
+            )
+            export_root = root / "materialized_16_clean"
+
+            summary = materialize_routerset_dataset(
+                routerset_dir=root,
+                output_dir=export_root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                target_size=16,
+                target_channels=8,
+                clean_export=True,
+            )
+
+            manifest_path = export_root / "manifest_16.jsonl"
+            fault_rows_path = export_root / "fault_rows_16.jsonl"
+            fault_report_path = export_root / "fault_report.json"
+            self.assertEqual(summary["export_mode"], "clean")
+            self.assertTrue(manifest_path.exists())
+            self.assertTrue(fault_rows_path.exists())
+            self.assertTrue(fault_report_path.exists())
+
+            rows = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            fault_rows = [json.loads(line) for line in fault_rows_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertEqual(len(rows), 18)
+            self.assertEqual(len(fault_rows), 1)
+            self.assertEqual(fault_rows[0]["source_dataset"], "worldfloods")
+            self.assertEqual(fault_rows[0]["fault_codes"], ["all_zero_materialized_tile"])
+            self.assertEqual(fault_rows[0]["fault_action"], "excluded_from_clean_export")
+            self.assertEqual(summary["fault_report"]["row_faults_by_code"], {"all_zero_materialized_tile": 1})
+            self.assertEqual(summary["fault_report"]["excluded_rows_by_expert"], {"worldfloods": 1})
+            self.assertFalse(summary["fault_report"]["training_ready"])
+            self.assertIn(
+                {"code": "missing_positive_rows", "count": 0, "expert": "fire", "split": "validation"},
+                summary["fault_report"]["training_blockers"],
+            )
+
     def test_normalize_routerset_array_adapts_all_source_layouts(self) -> None:
         fire = normalize_routerset_array(np.random.randn(8, 16, 16).astype(np.float32), source_dataset="fire")
         burned_area = normalize_routerset_array(np.random.randn(7, 16, 16).astype(np.float32), source_dataset="burned_area")
@@ -201,6 +533,81 @@ class TestMoETraining(unittest.TestCase):
         self.assertEqual(tuple(burned_area.shape), (8, 16, 16))
         self.assertEqual(tuple(lc.shape), (8, 16, 16))
         self.assertEqual(tuple(roads.shape), (8, 16, 16))
+
+    def test_normalize_routerset_array_matches_phi2fm_student_roads_contract(self) -> None:
+        values = np.array([100, 200, 300, 400, 500, 600, 700, 800, 900, 1000], dtype=np.uint16)
+        array = np.broadcast_to(values, (4, 4, 10)).copy()
+
+        normalized = normalize_routerset_array(array, source_dataset="roads")
+
+        self.assertTrue(torch.allclose(normalized[0], torch.full((4, 4), 0.01)))
+        self.assertTrue(torch.allclose(normalized[1], torch.full((4, 4), 0.02)))
+        self.assertTrue(torch.allclose(normalized[2], torch.full((4, 4), 0.03)))
+        self.assertTrue(torch.allclose(normalized[3], torch.zeros((4, 4))))
+        self.assertTrue(torch.allclose(normalized[4], torch.full((4, 4), 0.04)))
+        self.assertTrue(torch.allclose(normalized[5], torch.full((4, 4), 0.05)))
+        self.assertTrue(torch.allclose(normalized[6], torch.full((4, 4), 0.06)))
+        self.assertTrue(torch.allclose(normalized[7], torch.full((4, 4), 0.07)))
+
+    def test_normalize_routerset_array_copies_non_writable_input(self) -> None:
+        array = np.arange(32, dtype=np.float32).reshape(8, 2, 2)
+        array.setflags(write=False)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            normalized = normalize_routerset_array(array, source_dataset="fire")
+
+        normalized[0, 0, 0] = 123.0
+        self.assertEqual(float(normalized[0, 0, 0]), 123.0)
+        self.assertEqual(float(array[0, 0, 0]), 0.0)
+
+    def test_build_routerset_training_tensor_zero_pads_small_patches(self) -> None:
+        roads = build_routerset_training_tensor(
+            np.full((16, 16, 10), 1000, dtype=np.uint16),
+            source_dataset="roads",
+            target_size=32,
+            target_channels=8,
+        )
+        burned_area = build_routerset_training_tensor(
+            np.full((7, 16, 16), 1.0, dtype=np.float32),
+            source_dataset="burned_area",
+            target_size=32,
+            target_channels=8,
+        )
+
+        self.assertEqual(tuple(roads.shape), (8, 32, 32))
+        self.assertEqual(tuple(burned_area.shape), (8, 32, 32))
+        self.assertTrue(torch.allclose(roads[0, :16, :16], torch.full((16, 16), 0.1)))
+        self.assertTrue(torch.allclose(roads[3, :16, :16], torch.zeros((16, 16))))
+        self.assertEqual(float(roads[:, 16:, :].sum().item()), 0.0)
+        self.assertEqual(float(roads[:, :, 16:].sum().item()), 0.0)
+        self.assertTrue(torch.all(burned_area[:7, :16, :16] > 0))
+        self.assertEqual(float(burned_area[:, 16:, :].sum().item()), 0.0)
+        self.assertEqual(float(burned_area[:, :, 16:].sum().item()), 0.0)
+
+    def test_reduce_expert_output_to_routing_score_prefers_sparse_binary_activation(self) -> None:
+        logits = torch.full((1, 1, 16, 16), -12.0)
+        logits[0, 0, 5, 7] = 12.0
+
+        score = _reduce_expert_output_to_routing_score(logits)
+
+        self.assertGreater(score, 0.99)
+
+    def test_normalize_routerset_array_sanitizes_non_finite_values(self) -> None:
+        array = np.array(
+            [
+                [[np.nan, np.inf], [-np.inf, 5.0]],
+                [[1.0, 2.0], [3.0, 4.0]],
+            ],
+            dtype=np.float32,
+        )
+
+        normalized = normalize_routerset_array(array, source_dataset="fire", target_channels=2)
+
+        self.assertTrue(np.isfinite(normalized.numpy()).all())
+        self.assertEqual(float(normalized.min()), 0.0)
+        self.assertEqual(float(normalized.max()), 5.0)
+        self.assertIn(1.0, normalized.numpy())
 
     def test_dataset_supports_full_routerset_expert_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -230,7 +637,210 @@ class TestMoETraining(unittest.TestCase):
             self.assertEqual(summary["positive_counts_by_expert"]["burned_area"], 1)
             self.assertEqual(summary["positive_counts_by_expert"]["fire"], 2)
             self.assertEqual(summary["raw_counts_by_expert"]["anomaly_detection"], 1)
+            self.assertEqual(summary["normalization_modes_by_expert"]["roads"], {"phi2fm_student_s2_layout_scaled": 1})
+            self.assertEqual(summary["normalization_modes_by_expert"]["lc"], {"phi2fm_student_s2_layout_scaled": 1})
+            self.assertEqual(summary["manifest_shape_source_records_by_expert"]["roads"], 1)
+            self.assertEqual(summary["manifest_shape_raw_samples_by_expert"]["roads"][0]["raw_shape"], [16, 16, 10])
+            self.assertGreaterEqual(summary["manifest_shape_raw_samples_by_expert"]["roads"][0]["raw_min"], 0.0)
+            self.assertLess(summary["manifest_shape_raw_samples_by_expert"]["roads"][0]["raw_max"], 1000.0)
+            self.assertGreaterEqual(summary["manifest_shape_raw_samples_by_expert"]["roads"][0]["raw_zero_fraction"], 0.0)
+            self.assertLessEqual(summary["manifest_shape_raw_samples_by_expert"]["roads"][0]["raw_zero_fraction"], 1.0)
+            self.assertEqual(summary["num_manifest_shape_source_records"], 4)
+            self.assertEqual(summary["num_compatibility_path_source_records"], 0)
             self.assertEqual(summary["manifest_path"], str(resolve_routerset_dataset_root(root) / "manifest.jsonl"))
+
+    def test_dataset_summary_reports_compatibility_path_source_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            dataset_root = resolve_routerset_dataset_root(root)
+            manifest_paths = [dataset_root / "manifest.jsonl", default_rebuilt_manifest_path(root)]
+            for manifest_path in manifest_paths:
+                rows = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+                for row in rows:
+                    if row["source_dataset"] == "burned_area" and row["source_split"] == "train":
+                        row["patch_x"] = 0
+                        row["patch_y"] = 16
+                        break
+                manifest_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+            swapped_path = dataset_root / "images" / "burned_area" / "train" / "0000004_16_0_16_16.npy"
+            np.save(swapped_path, np.random.randn(7, 16, 16).astype(np.float32))
+
+            train_dataset = RoutersetMoEDataset(
+                root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                split="train",
+                target_size=16,
+            )
+
+            summary = train_dataset.summary()
+            self.assertEqual(summary["compatibility_path_source_records_by_expert"]["burned_area"], 1)
+            self.assertEqual(summary["num_compatibility_path_source_records"], 1)
+            self.assertEqual(summary["manifest_shape_raw_samples_by_expert"]["burned_area"][0]["raw_shape"], [7, 16, 16])
+            self.assertLessEqual(
+                summary["manifest_shape_raw_samples_by_expert"]["burned_area"][0]["raw_min"],
+                summary["manifest_shape_raw_samples_by_expert"]["burned_area"][0]["raw_max"],
+            )
+            self.assertTrue(summary["manifest_shape_raw_samples_by_expert"]["burned_area"][0]["used_compatibility_path"])
+            self.assertEqual(summary["normalization_modes_by_expert"]["burned_area"], {"channel_adapter": 1})
+
+    def test_generate_routerset_routing_targets_writes_multi_hot_targets_and_scores(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            manifest_path = resolve_routerset_dataset_root(root) / "manifest.jsonl"
+            rows = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            marker_map = {
+                ("anomaly_detection", "validation"): 1,
+                ("burned_area", "validation"): 2,
+                ("fire", "validation"): 3,
+                ("lc", "validation"): 4,
+                ("roads", "validation"): 5,
+                ("worldfloods", "validation"): 6,
+            }
+            for row in rows:
+                marker = marker_map.get((str(row["source_dataset"]), str(row["source_split"])))
+                if marker is not None:
+                    _set_fixture_marker(root, row, marker)
+
+            fake_models = {
+                "anomaly_detection": _FakeExpertModel(score_by_marker={1: 0.9, 2: 0.1, 3: 0.8, 4: 0.1, 5: 0.1, 6: 0.1}),
+                "burned_area": _FakeExpertModel(score_by_marker={1: 0.1, 2: 0.9, 3: 0.1, 4: 0.1, 5: 0.1, 6: 0.1}),
+                "fire": _FakeExpertModel(score_by_marker={1: 0.1, 2: 0.1, 3: 0.95, 4: 0.1, 5: 0.1, 6: 0.1}),
+                "lc": _FakeExpertModel(score_by_marker={1: 0.1, 2: 0.1, 3: 0.1, 4: 0.9, 5: 0.1, 6: 0.1}),
+                "roads": _FakeExpertModel(score_by_marker={1: 0.1, 2: 0.1, 3: 0.1, 4: 0.1, 5: 0.9, 6: 0.1}, single_channel=True),
+                "worldfloods": _FakeExpertModel(score_by_marker={1: 0.1, 2: 0.1, 3: 0.1, 4: 0.1, 5: 0.1, 6: 0.9}),
+            }
+            report_path = root / "routing_target_report.json"
+
+            with patch("hydranet.moe_training._load_student_expert_models", return_value=fake_models), patch(
+                "hydranet.moe_training._calibrate_routing_thresholds",
+                return_value={
+                    "anomaly_detection": 0.7,
+                    "burned_area": 0.8,
+                    "fire": 0.8,
+                    "lc": 0.8,
+                    "roads": 0.8,
+                    "worldfloods": 0.8,
+                },
+            ):
+                output_manifest = generate_routerset_routing_targets(
+                    root,
+                    manifest_path=manifest_path,
+                    expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                    report_path=report_path,
+                    target_size=16,
+                    target_channels=8,
+                    weights_dir=str(root / "weights"),
+                )
+
+            rewritten_rows = [json.loads(line) for line in output_manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
+            fire_validation = next(
+                row for row in rewritten_rows if row["source_dataset"] == "fire" and row["source_split"] == "validation"
+            )
+            self.assertEqual(fire_validation["routing_target_source"], "expert_inference_v1")
+            self.assertEqual(fire_validation["routing_target_experts"], ["anomaly_detection", "fire"])
+            self.assertEqual(fire_validation["routing_target"], [1.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+            self.assertEqual(list(fire_validation["routing_scores"].keys()), list(DEFAULT_ROUTERSET_EXPERTS))
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "generated")
+            self.assertGreater(report["average_active_experts"], 1.0)
+
+    def test_generate_routerset_routing_targets_falls_back_to_top1_when_no_threshold_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            manifest_path = resolve_routerset_dataset_root(root) / "manifest.jsonl"
+            rows = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            fire_validation = next(
+                row for row in rows if row["source_dataset"] == "fire" and row["source_split"] == "validation"
+            )
+            _set_fixture_marker(root, fire_validation, 7)
+
+            fake_models = {
+                "anomaly_detection": _FakeExpertModel(score_by_marker={7: 0.3}),
+                "burned_area": _FakeExpertModel(score_by_marker={7: 0.2}),
+                "fire": _FakeExpertModel(score_by_marker={7: 0.4}),
+                "lc": _FakeExpertModel(score_by_marker={7: 0.1}),
+                "roads": _FakeExpertModel(score_by_marker={7: 0.05}, single_channel=True),
+                "worldfloods": _FakeExpertModel(score_by_marker={7: 0.25}),
+            }
+
+            with patch("hydranet.moe_training._load_student_expert_models", return_value=fake_models), patch(
+                "hydranet.moe_training._calibrate_routing_thresholds",
+                return_value={expert: 0.95 for expert in DEFAULT_ROUTERSET_EXPERTS},
+            ):
+                output_manifest = generate_routerset_routing_targets(
+                    root,
+                    manifest_path=manifest_path,
+                    expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                    target_size=16,
+                    target_channels=8,
+                )
+
+            rewritten_rows = [json.loads(line) for line in output_manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
+            updated_fire = next(
+                row for row in rewritten_rows if row["source_dataset"] == "fire" and row["source_split"] == "validation"
+            )
+            self.assertEqual(updated_fire["routing_target_experts"], ["fire"])
+            self.assertEqual(sum(updated_fire["routing_target"]), 1.0)
+
+    def test_routerset_dataset_uses_generated_routing_target_instead_of_source_dataset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            manifest_path = resolve_routerset_dataset_root(root) / "manifest.jsonl"
+            rows = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            for row in rows:
+                if row["source_dataset"] == "fire" and row["source_split"] == "train":
+                    row["routing_target"] = [1.0, 0.0, 1.0, 0.0, 0.0, 0.0]
+                    row["routing_target_experts"] = ["anomaly_detection", "fire"]
+                    row["routing_scores"] = {expert: 0.0 for expert in DEFAULT_ROUTERSET_EXPERTS}
+                    row["routing_target_source"] = "expert_inference_v1"
+                    break
+            manifest_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+            train_dataset = RoutersetMoEDataset(
+                root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                split="train",
+                target_size=16,
+            )
+            fire_sample = next(sample for sample in train_dataset if sample["expert_name"] == "fire")
+            self.assertEqual(fire_sample["target"].tolist(), [1.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+
+    def test_dataset_sanitizes_non_finite_anomaly_tiles_and_reports_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            _inject_non_finite_routerset_sample(
+                root,
+                source_dataset="anomaly_detection",
+                source_split="train",
+                source_sample_id="0000002",
+            )
+
+            train_dataset = RoutersetMoEDataset(
+                root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                split="train",
+                target_size=16,
+            )
+            corrupt_samples = [
+                train_dataset[index]
+                for index, record in enumerate(train_dataset.records)
+                if record.base_source_sample_id == "0000002"
+            ]
+
+            self.assertTrue(corrupt_samples)
+            self.assertTrue(all(np.isfinite(sample["image"].numpy()).all() for sample in corrupt_samples))
+            summary = train_dataset.summary()
+            self.assertEqual(summary["non_finite_source_records_by_expert"]["anomaly_detection"], 1)
+            self.assertEqual(summary["sanitized_training_tensors_by_expert"]["anomaly_detection"], 4)
+            self.assertEqual(summary["num_non_finite_source_records"], 1)
+            self.assertEqual(summary["num_sanitized_training_tensors"], 4)
+            self.assertEqual(summary["num_non_finite_values"], 96)
 
     def test_rebuild_routerset_split_manifest_repairs_fire_validation(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -247,6 +857,239 @@ class TestMoETraining(unittest.TestCase):
             self.assertTrue(fire_train)
             self.assertTrue(fire_val)
             self.assertEqual(fire_val[0]["source_split"], "train")
+
+    def test_preflight_routerset_training_generates_targets_before_dataset_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+            observed: list[str] = []
+
+            def _fake_generate(**kwargs):
+                observed.append("generate")
+                report_path = kwargs.get("report_path")
+                if report_path is not None:
+                    Path(report_path).write_text("{}", encoding="utf-8")
+                return Path(kwargs["output_path"])
+
+            def _fake_collect(*args, **kwargs):
+                observed.append("dataset_report")
+                return {
+                    "train": {"counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                              "positive_counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                              "training_shapes_by_expert": {name: {"8x16x16": 1} for name in DEFAULT_ROUTERSET_EXPERTS}},
+                    "validation": {"counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                                   "positive_counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                                   "training_shapes_by_expert": {name: {"8x16x16": 1} for name in DEFAULT_ROUTERSET_EXPERTS}},
+                    "sampling": {"balanced_sampling": True, "expanded_counts_by_expert": {}, "class_weights": {}, "num_samples": 1},
+                }
+
+            with patch(
+                "hydranet.moe_training.resolve_student_checkpoint_report",
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
+            ), patch(
+                "hydranet.moe_training.generate_routerset_routing_targets",
+                side_effect=_fake_generate,
+            ), patch(
+                "hydranet.moe_training.collect_routerset_dataset_report",
+                side_effect=_fake_collect,
+            ), patch("hydranet.moe_training.validate_routerset_dataset_report", return_value=None):
+                report = preflight_routerset_training(
+                    routerset_dir=root,
+                    output_dir=output_dir,
+                    expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                    target_size=16,
+                    target_channels=8,
+                    runtime_root=root / "runtime",
+                )
+
+            self.assertEqual(observed, ["generate", "dataset_report"])
+            self.assertEqual(
+                report["manifest_path"],
+                str(root / "runtime" / "routerset_materialized" / "manifest_16.jsonl"),
+            )
+            self.assertTrue((output_dir / "routing_target_report.json").exists())
+
+    def test_preflight_routerset_training_does_not_force_if_skip_routing_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+            captured: dict[str, bool] = {}
+
+            def _fake_generate(**kwargs) -> Path:
+                captured["force"] = kwargs["force"]
+                Path(kwargs["output_path"]).write_text("{}", encoding="utf-8")
+                if kwargs.get("report_path") is not None:
+                    Path(kwargs["report_path"]).write_text("{}", encoding="utf-8")
+                return Path(kwargs["output_path"])
+
+            def _fake_collect(*args, **kwargs):
+                return {
+                    "train": {"counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                              "positive_counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                              "training_shapes_by_expert": {name: {"8x16x16": 1} for name in DEFAULT_ROUTERSET_EXPERTS}},
+                    "validation": {"counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                                   "positive_counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                                   "training_shapes_by_expert": {name: {"8x16x16": 1} for name in DEFAULT_ROUTERSET_EXPERTS}},
+                    "sampling": {"balanced_sampling": True, "expanded_counts_by_expert": {}, "class_weights": {}, "num_samples": 1},
+                }
+
+            with patch(
+                "hydranet.moe_training.resolve_student_checkpoint_report",
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
+            ), patch(
+                "hydranet.moe_training.generate_routerset_routing_targets",
+                side_effect=_fake_generate,
+            ), patch(
+                "hydranet.moe_training.collect_routerset_dataset_report",
+                side_effect=_fake_collect,
+            ), patch("hydranet.moe_training.validate_routerset_dataset_report", return_value=None):
+                preflight_routerset_training(
+                    routerset_dir=root,
+                    output_dir=output_dir,
+                    expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                    target_size=16,
+                    target_channels=8,
+                    runtime_root=root / "runtime",
+                    skip_existing_routing_targets=True,
+                )
+
+            self.assertIn("force", captured)
+            self.assertFalse(captured["force"])
+
+    def test_train_switcher_generates_targets_before_training(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            output_dir = root / "out"
+            release_dir = output_dir / "bundle" / "phidranet_demo"
+            observed: list[str] = []
+
+            class FakeModel(torch.nn.Module):
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.expert_names = list(DEFAULT_ROUTERSET_EXPERTS)
+                    self.encoder_source_task = "anomaly_detection"
+                    self.threshold = 0.5
+                    self.top_k = len(DEFAULT_ROUTERSET_EXPERTS)
+                    self.encoder = torch.nn.Linear(1, 1)
+                    self.switcher = torch.nn.Linear(1, len(DEFAULT_ROUTERSET_EXPERTS))
+                    self.experts = torch.nn.ModuleDict({name: torch.nn.Identity() for name in DEFAULT_ROUTERSET_EXPERTS})
+
+            class FakeLightningModule:
+                def __init__(self, model, *, learning_rate: float, weight_decay: float) -> None:
+                    self.model = model
+
+            class FakeTrainer:
+                callback_metrics = {"val_loss": 0.25}
+
+                def fit(self, lightning_module, train_dataloaders=None, val_dataloaders=None) -> None:
+                    _ = (lightning_module, train_dataloaders, val_dataloaders)
+                    observed.append("fit")
+
+            def _fake_generate(**kwargs):
+                observed.append("generate")
+                report_path = kwargs.get("report_path")
+                if report_path is not None:
+                    Path(report_path).write_text("{}", encoding="utf-8")
+                return Path(kwargs["output_path"])
+
+            def _fake_collect(*args, **kwargs):
+                observed.append("dataset_report")
+                return {
+                    "train": {"counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                              "positive_counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                              "training_shapes_by_expert": {name: {"8x16x16": 1} for name in DEFAULT_ROUTERSET_EXPERTS}},
+                    "validation": {"counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                                   "positive_counts_by_expert": {name: 1 for name in DEFAULT_ROUTERSET_EXPERTS},
+                                   "training_shapes_by_expert": {name: {"8x16x16": 1} for name in DEFAULT_ROUTERSET_EXPERTS}},
+                    "sampling": {"balanced_sampling": True, "expanded_counts_by_expert": {}, "class_weights": {}, "num_samples": 1},
+                }
+
+            def _fake_capture(model, out_dir):
+                path = Path(out_dir) / "baseline_summary.json"
+                path.write_text("{}", encoding="utf-8")
+                return path
+
+            def _fake_save_bundle(model, path, **kwargs):
+                Path(path).write_bytes(b"bundle")
+                return Path(path)
+
+            def _fake_write_predictions(model, dataloader, output_path):
+                Path(output_path).write_text("{}\n", encoding="utf-8")
+                return Path(output_path)
+
+            def _fake_release(**kwargs):
+                release_dir.mkdir(parents=True, exist_ok=True)
+                for filename in ["student_moe_bundle.pt", "config.json", "metrics.json", "baseline_summary.json", "routing_predictions.jsonl", "dataset_report.json", "checkpoint_report.json", "release_manifest.json", "DEPLOY.md"]:
+                    path = release_dir / filename
+                    if path.suffix == ".pt":
+                        path.write_bytes(b"bundle")
+                    else:
+                        path.write_text("{}", encoding="utf-8")
+                return {
+                    "release_dir": str(release_dir),
+                    "bundle_path": str(release_dir / "student_moe_bundle.pt"),
+                    "config_path": str(release_dir / "config.json"),
+                    "metrics_path": str(release_dir / "metrics.json"),
+                    "baseline_summary_path": str(release_dir / "baseline_summary.json"),
+                    "routing_predictions_path": str(release_dir / "routing_predictions.jsonl"),
+                    "dataset_report_path": str(release_dir / "dataset_report.json"),
+                    "checkpoint_report_path": str(release_dir / "checkpoint_report.json"),
+                    "release_manifest_path": str(release_dir / "release_manifest.json"),
+                    "deployment_path": str(release_dir / "DEPLOY.md"),
+                }
+
+            with patch(
+                "hydranet.moe_training.resolve_student_checkpoint_report",
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
+            ), patch("hydranet.moe_training.generate_routerset_routing_targets", side_effect=_fake_generate), patch(
+                "hydranet.moe_training.collect_routerset_dataset_report",
+                side_effect=_fake_collect,
+            ), patch("hydranet.moe_training.validate_routerset_dataset_report", return_value=None), patch(
+                "hydranet.moe_training.probe_lightning_import",
+                return_value=None,
+            ), patch("hydranet.moe_training.build_routerset_moe", return_value=FakeModel()), patch(
+                "hydranet.moe_training.capture_baseline_summary",
+                side_effect=_fake_capture,
+            ), patch("hydranet.moe_training._loading_module", return_value=_FakeLoadingModule(save_bundle_side_effect=_fake_save_bundle)), patch(
+                "hydranet.moe_training.write_routing_predictions",
+                side_effect=_fake_write_predictions,
+            ), patch("hydranet.moe_training.create_phidranet_release", side_effect=_fake_release), patch(
+                "hydranet.moe_training.load_lightning_training_components",
+                return_value=(FakeLightningModule, lambda *args, **kwargs: FakeTrainer(), lambda *args, **kwargs: None),
+            ):
+                summary = train_switcher(
+                    routerset_dir=root,
+                    output_dir=output_dir,
+                    expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                    runtime_root=root / "runtime",
+                    target_size=16,
+                    target_channels=8,
+                    release_name="demo",
+                    startup_timeout_seconds=1,
+                    max_epochs=1,
+                )
+
+            self.assertEqual(observed[:2], ["generate", "dataset_report"])
+            self.assertEqual(summary["status"], "completed")
+
+    def test_rebuild_routerset_split_manifest_syncs_legacy_root_copy_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root, broken_fire_validation=True)
+            legacy_root_rebuilt_manifest_path(root).write_text("stale\n", encoding="utf-8")
+
+            rebuilt = rebuild_routerset_split_manifest(
+                root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+            )
+
+            self.assertEqual(
+                legacy_root_rebuilt_manifest_path(root).read_text(encoding="utf-8"),
+                rebuilt.read_text(encoding="utf-8"),
+            )
 
     def test_preflight_reports_dataset_and_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -273,6 +1116,52 @@ class TestMoETraining(unittest.TestCase):
             checkpoint_report = json.loads((root / "out" / "checkpoint_report.json").read_text(encoding="utf-8"))
             self.assertEqual(sorted(checkpoint_report), list(DEFAULT_ROUTERSET_EXPERTS))
             self.assertEqual(checkpoint_report["fire"]["status"], "ok")
+            self.assertEqual(
+                report["dataset_report"]["train"]["normalization_modes_by_expert"]["roads"],
+                {"phi2fm_student_s2_layout_scaled": 1},
+            )
+            self.assertEqual(
+                report["dataset_report"]["train"]["manifest_shape_raw_samples_by_expert"]["roads"][0]["raw_shape"],
+                [16, 16, 10],
+            )
+            self.assertGreaterEqual(
+                report["dataset_report"]["train"]["manifest_shape_raw_samples_by_expert"]["roads"][0]["raw_min"],
+                0.0,
+            )
+            self.assertLess(
+                report["dataset_report"]["train"]["manifest_shape_raw_samples_by_expert"]["roads"][0]["raw_max"],
+                1000.0,
+            )
+            self.assertEqual(report["dataset_report"]["train"]["num_manifest_shape_source_records"], 10)
+            self.assertEqual(report["dataset_report"]["train"]["num_compatibility_path_source_records"], 0)
+
+    def test_preflight_reports_sanitized_non_finite_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            _inject_non_finite_routerset_sample(
+                root,
+                source_dataset="anomaly_detection",
+                source_split="train",
+                source_sample_id="0000002",
+            )
+            with patch(
+                "hydranet.moe_training.resolve_student_checkpoint_report",
+                return_value=_checkpoint_report(weights_dir=str(root / "weights")),
+            ):
+                report = preflight_routerset_training(
+                    routerset_dir=root,
+                    expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                    target_size=16,
+                    output_dir=root / "out",
+                    release_name="demo",
+                )
+
+            train_report = report["dataset_report"]["train"]
+            self.assertEqual(train_report["non_finite_source_records_by_expert"]["anomaly_detection"], 1)
+            self.assertEqual(train_report["sanitized_training_tensors_by_expert"]["anomaly_detection"], 4)
+            self.assertEqual(train_report["num_non_finite_source_records"], 1)
+            self.assertEqual(train_report["num_sanitized_training_tensors"], 4)
 
     def test_preflight_rejects_missing_positive_experts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -527,8 +1416,8 @@ class TestMoETraining(unittest.TestCase):
                 "hydranet.moe_training.capture_baseline_summary",
                 side_effect=_fake_capture_baseline_summary,
             ), patch(
-                "hydranet.moe_training.save_student_moe_bundle",
-                side_effect=_fake_save_bundle,
+                "hydranet.moe_training._loading_module",
+                return_value=_FakeLoadingModule(save_bundle_side_effect=_fake_save_bundle),
             ), patch(
                 "hydranet.moe_training.write_routing_predictions",
                 side_effect=_fake_write_predictions,
@@ -652,8 +1541,8 @@ class TestMoETraining(unittest.TestCase):
                 "hydranet.moe_training.capture_baseline_summary",
                 side_effect=_fake_capture_baseline_summary,
             ), patch(
-                "hydranet.moe_training.save_student_moe_bundle",
-                side_effect=_fake_save_bundle,
+                "hydranet.moe_training._loading_module",
+                return_value=_FakeLoadingModule(save_bundle_side_effect=_fake_save_bundle),
             ), patch(
                 "hydranet.moe_training.write_routing_predictions",
                 side_effect=_fake_write_predictions,
@@ -808,8 +1697,8 @@ class TestMoETraining(unittest.TestCase):
                 "hydranet.moe_training.capture_baseline_summary",
                 side_effect=lambda model, out: _fake_baseline_summary(out),
             ), patch(
-                "hydranet.moe_training.save_student_moe_bundle",
-            ) as save_bundle_mock, patch(
+                "hydranet.moe_training._loading_module",
+            ) as loading_module_mock, patch(
                 "hydranet.moe_training.create_phidranet_release",
             ) as create_release_mock, patch(
                 "hydranet.moe_training.load_lightning_training_components",
@@ -828,7 +1717,7 @@ class TestMoETraining(unittest.TestCase):
                         max_epochs=1,
                     )
 
-            save_bundle_mock.assert_not_called()
+            loading_module_mock.assert_not_called()
             create_release_mock.assert_not_called()
             self.assertFalse((output_dir / "student_moe_bundle.pt").exists())
 
@@ -930,8 +1819,8 @@ class TestMoETraining(unittest.TestCase):
                 "hydranet.moe_training.capture_baseline_summary",
                 side_effect=_fake_capture_baseline_summary,
             ), patch(
-                "hydranet.moe_training.save_student_moe_bundle",
-                side_effect=_fake_save_bundle,
+                "hydranet.moe_training._loading_module",
+                return_value=_FakeLoadingModule(save_bundle_side_effect=_fake_save_bundle),
             ), patch(
                 "hydranet.moe_training.write_routing_predictions",
                 side_effect=_fake_write_predictions,
@@ -957,7 +1846,7 @@ class TestMoETraining(unittest.TestCase):
             gate_report = json.loads((output_dir / "startup_gate.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["status"], "completed")
             self.assertEqual(gate_report["status"], "skipped")
-            self.assertEqual(gate_report["timeout_seconds"], 60)
+            self.assertEqual(gate_report["timeout_seconds"], 120)
             self.assertEqual(gate_report["lightning_probe"]["status"], "skipped")
             self.assertEqual(probe_mock.call_count, 1)
 
@@ -1341,6 +2230,24 @@ class TestMoETraining(unittest.TestCase):
             self.assertIn("--release-name", result.stderr)
             self.assertEqual(list(root.iterdir()), [])
 
+    def test_public_package_imports_finish_for_cli_bootstrap(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        env = dict(os.environ)
+        env["PYTHONPATH"] = str(repo_root / "src")
+
+        result = subprocess.run(
+            [sys.executable, "-c", "import hydranet; import hydranet.moe_training; print('ok')"],
+            cwd=repo_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("ok", result.stdout)
+
     def test_lazy_lightning_proxy_uses_loader(self) -> None:
         models = {name: create_phisatnet("checkpoint", n_classes=1) for name in DEFAULT_ROUTERSET_EXPERTS}
         moe_model = build_moe_student_from_models(models, threshold=0.5, top_k=1)
@@ -1373,6 +2280,10 @@ class TestMoETraining(unittest.TestCase):
         self.assertNotIn("import pytorch_lightning as pl", source)
         self.assertNotIn("from pytorch_lightning.callbacks import EarlyStopping", source)
         self.assertIn("load_lightning_training_components", source)
+
+    def test_moe_lightning_source_does_not_mask_cuda_devices(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "src/hydranet/moe_lightning.py").read_text(encoding="utf-8")
+        self.assertNotIn('CUDA_VISIBLE_DEVICES', source)
 
     def test_release_helpers_create_expected_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

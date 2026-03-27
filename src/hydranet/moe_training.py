@@ -12,20 +12,16 @@ from csv import DictReader
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+from importlib import import_module
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Union
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 
-from .loading import (
-    _resolve_student_checkpoint_path,
-    load_student_moe,
-    load_student_moe_bundle,
-    save_student_moe_bundle,
-)
-from .models.moe_student import MoEStudent
+if TYPE_CHECKING:
+    from .models.moe_student import MoEStudent
 
 DEFAULT_ROUTERSET_EXPERTS = (
     "anomaly_detection",
@@ -38,7 +34,12 @@ DEFAULT_ROUTERSET_EXPERTS = (
 DEFAULT_ROUTERSET_TARGET_SIZE = 256
 DEFAULT_ROUTERSET_DATASET_SUBDIR = "multilabel_dataset"
 DEFAULT_ROUTERSET_MANIFEST = "multilabel_dataset/manifest.jsonl"
-DEFAULT_STARTUP_TIMEOUT_SECONDS = 60
+ROUTERSET_SWAPPED_TILE_DATASETS = frozenset({"burned_area", "worldfloods"})
+ROUTERSET_PHI2FM_RAW_S2_DATASETS = frozenset({"lc", "roads"})
+ROUTERSET_PHI2FM_STUDENT_SCALE = 10000.0
+DEFAULT_ROUTERSET_REPORT_RAW_SAMPLES_PER_EXPERT = 2
+DEFAULT_ROUTERSET_FAULT_EXAMPLES_PER_CODE = 5
+DEFAULT_STARTUP_TIMEOUT_SECONDS = 120
 DEFAULT_RUNTIME_SUBDIR = "runtime"
 DEFAULT_BUNDLE_SUBDIR = "bundle"
 FULL_TRAINING_CONTRACT_VERSION = 1
@@ -58,12 +59,14 @@ RUN_ARTIFACT_FILENAMES = {
     "config": "config.json",
     "dataset_report": "dataset_report.json",
     "checkpoint_report": "checkpoint_report.json",
+    "routing_target_report": "routing_target_report.json",
     "baseline_summary": "baseline_summary.json",
     "metrics": "metrics.json",
     "bundle": "student_moe_bundle.pt",
     "routing_predictions": "routing_predictions.jsonl",
     "summary": "summary.json",
 }
+ROUTING_TARGET_SOURCE = "expert_inference_v1"
 RELEASE_ARTIFACT_FILENAMES = {
     "bundle": "student_moe_bundle.pt",
     "config": "config.json",
@@ -83,6 +86,10 @@ ARTIFACT_LAYOUT_DIRS = {
     "bundle_root": DEFAULT_BUNDLE_SUBDIR,
     "inference": "inference",
 }
+
+
+def _loading_module():
+    return import_module("hydranet.loading")
 
 
 def utc_timestamp() -> str:
@@ -107,6 +114,18 @@ def save_text(path: Union[str, Path], text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
+
+
+def _routing_target_row_token(row: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        str(row.get("source_dataset", "")),
+        str(row.get("source_sample_id", "")),
+        str(row.get("moe_split", row.get("source_split", ""))),
+        int(row.get("patch_x") or 0),
+        int(row.get("patch_y") or 0),
+        str(row.get("patch_width")),
+        str(row.get("patch_height")),
+    )
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
@@ -408,16 +427,57 @@ def default_rebuilt_manifest_path(routerset_dir: Union[str, Path]) -> Path:
     return resolve_routerset_dataset_root(routerset_dir) / "manifest_moe_train.jsonl"
 
 
+def legacy_root_rebuilt_manifest_path(routerset_dir: Union[str, Path]) -> Path:
+    return Path(routerset_dir) / "manifest_moe_train.jsonl"
+
+
 def routerset_patch_token(row: Mapping[str, Any]) -> str:
     width = row["patch_width"] if row["patch_width"] is not None else "full"
     height = row["patch_height"] if row["patch_height"] is not None else "full"
     return f"{row['source_sample_id']}_{row['patch_x']}_{row['patch_y']}_{height}_{width}.npy"
 
 
+def routerset_compatibility_patch_token(row: Mapping[str, Any]) -> Optional[str]:
+    width = row["patch_width"]
+    height = row["patch_height"]
+    if width is None or height is None:
+        return None
+    if row["source_dataset"] not in ROUTERSET_SWAPPED_TILE_DATASETS:
+        return None
+    return f"{row['source_sample_id']}_{row['patch_y']}_{row['patch_x']}_{height}_{width}.npy"
+
+
 def routerset_image_path(routerset_dir: Union[str, Path], row: Mapping[str, Any]) -> Path:
+    materialized_image_path = row.get("materialized_image_path")
+    if materialized_image_path:
+        return Path(str(materialized_image_path))
+
     routerset_root = resolve_routerset_dataset_root(routerset_dir)
     filename = routerset_patch_token(row)
-    return routerset_root / "images" / row["source_dataset"] / row["source_split"] / filename
+    image_dir = routerset_root / "images" / row["source_dataset"] / row["source_split"]
+    primary = image_dir / filename
+    if primary.exists():
+        return primary
+
+    compatibility_filename = routerset_compatibility_patch_token(row)
+    if compatibility_filename is not None:
+        compatibility_path = image_dir / compatibility_filename
+        if compatibility_path.exists():
+            return compatibility_path
+
+    return primary
+
+
+def routerset_uses_compatibility_path(row: Mapping[str, Any], image_path: Union[str, Path]) -> bool:
+    if row.get("materialized_image_path"):
+        return False
+    primary_filename = routerset_patch_token(row)
+    compatibility_filename = routerset_compatibility_patch_token(row)
+    if compatibility_filename is None:
+        return False
+    if compatibility_filename == primary_filename:
+        return False
+    return Path(image_path).name == compatibility_filename
 
 
 def resolve_routerset_manifest_path(
@@ -531,7 +591,13 @@ def rebuild_routerset_split_manifest(
 
     destination = Path(output_path) if output_path is not None else default_rebuilt_manifest_path(routerset_dir)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text("\n".join(json.dumps(row, sort_keys=True) for row in final_rows) + "\n", encoding="utf-8")
+    payload = "\n".join(json.dumps(row, sort_keys=True) for row in final_rows) + "\n"
+    destination.write_text(payload, encoding="utf-8")
+
+    legacy_destination = legacy_root_rebuilt_manifest_path(routerset_dir)
+    if legacy_destination != destination and legacy_destination.exists():
+        legacy_destination.write_text(payload, encoding="utf-8")
+
     return destination
 
 
@@ -554,6 +620,112 @@ def _normalize_to_channel_first(array: np.ndarray) -> np.ndarray:
     raise ValueError(f"Could not infer channel axis for shape {array.shape}")
 
 
+def sanitize_routerset_array(array: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+    current = np.asarray(array)
+    finite_mask = np.isfinite(current)
+    non_finite_count = int((~finite_mask).sum())
+    diagnostics = {
+        "had_non_finite": non_finite_count > 0,
+        "non_finite_count": non_finite_count,
+        "nan_count": int(np.isnan(current).sum()),
+        "pos_inf_count": int(np.isposinf(current).sum()),
+        "neg_inf_count": int(np.isneginf(current).sum()),
+    }
+    if non_finite_count <= 0:
+        return current, diagnostics
+
+    finite_values = current[finite_mask]
+    finite_min = float(finite_values.min()) if finite_values.size > 0 else 0.0
+    finite_max = float(finite_values.max()) if finite_values.size > 0 else 0.0
+    diagnostics["finite_min"] = finite_min
+    diagnostics["finite_max"] = finite_max
+    sanitized = np.nan_to_num(
+        current,
+        nan=0.0,
+        posinf=finite_max,
+        neginf=finite_min,
+        copy=True,
+    )
+    return sanitized, diagnostics
+
+
+def _normalize_routerset_channel_count(current: np.ndarray, *, target_channels: int) -> np.ndarray:
+    if current.shape[0] > target_channels:
+        return current[:target_channels]
+    if current.shape[0] < target_channels:
+        padding = np.zeros(
+            (target_channels - current.shape[0], current.shape[1], current.shape[2]),
+            dtype=current.dtype,
+        )
+        return np.concatenate([current, padding], axis=0)
+    return current
+
+
+def _map_phi2fm_s2_to_student_channels(current: np.ndarray) -> np.ndarray:
+    """
+    Map PhilEO-Bench Sentinel-2 channels into the 8-channel student layout used by
+    the original Phi2FM UNet/Myriad downstream runs.
+
+    Input S2 order in Phi2FM:
+    B02, B03, B04, B08, B05, B06, B07, B8A, B11, B12
+
+    Student-compatible 8-channel order:
+    B02, B03, B04, PAN, B08, B05, B06, B07
+
+    The raw S2 exports do not contain the PhiSat PAN channel, so that slot stays 0.
+    """
+    if current.shape[0] < 7:
+        raise ValueError(f"Expected at least 7 S2 channels, got shape {tuple(current.shape)}")
+    _, height, width = current.shape
+    mapped = np.zeros((8, height, width), dtype=current.dtype)
+    mapped[0] = current[0]  # B02
+    mapped[1] = current[1]  # B03
+    mapped[2] = current[2]  # B04
+    mapped[4] = current[3]  # B08
+    mapped[5] = current[4]  # B05
+    mapped[6] = current[5]  # B06
+    mapped[7] = current[6]  # B07
+    return mapped
+
+
+def _normalize_routerset_array_impl(
+    array: np.ndarray,
+    *,
+    source_dataset: str,
+    target_channels: int,
+) -> tuple[np.ndarray, dict[str, Any], str, str]:
+    sanitized, diagnostics = sanitize_routerset_array(np.asarray(array))
+    original_dtype = str(sanitized.dtype)
+    current = _normalize_to_channel_first(sanitized)
+    current = current.astype(np.float32, copy=False)
+    normalization_mode = "channel_adapter"
+
+    if source_dataset in ROUTERSET_PHI2FM_RAW_S2_DATASETS:
+        if target_channels == 8 and current.shape[0] >= 10:
+            current = _map_phi2fm_s2_to_student_channels(current)
+            normalization_mode = "phi2fm_student_s2_layout"
+        else:
+            current = _normalize_routerset_channel_count(current, target_channels=target_channels)
+            normalization_mode = "phi2fm_student_channel_adapter"
+        current_max = float(np.max(current)) if current.size > 0 else 0.0
+        if np.issubdtype(sanitized.dtype, np.integer) or current_max > 1.5:
+            current = current / ROUTERSET_PHI2FM_STUDENT_SCALE
+            normalization_mode = f"{normalization_mode}_scaled"
+        current = current.astype(np.float32, copy=False)
+    else:
+        current = _normalize_routerset_channel_count(current, target_channels=target_channels)
+
+    return current, diagnostics, normalization_mode, original_dtype
+
+
+def infer_routerset_normalization_mode(*, source_dataset: str, target_channels: int) -> str:
+    if source_dataset in ROUTERSET_PHI2FM_RAW_S2_DATASETS:
+        if target_channels == 8:
+            return "phi2fm_student_s2_layout_scaled"
+        return "phi2fm_student_channel_adapter_scaled"
+    return "channel_adapter"
+
+
 def normalize_routerset_array(
     array: np.ndarray,
     *,
@@ -561,22 +733,13 @@ def normalize_routerset_array(
     target_channels: int = 8,
 ) -> torch.Tensor:
     """Normalize any routerset source tensor into channel-first 8-channel float32."""
-    current = np.asarray(array)
-    current = _normalize_to_channel_first(current)
-    current = current.astype(np.float32, copy=False)
-
-    # Deterministic v1 adapter rules by source family.
-    if source_dataset in {"lc", "roads"} and current.shape[0] >= target_channels:
-        current = current[:target_channels]
-    elif current.shape[0] > target_channels:
-        current = current[:target_channels]
-    elif current.shape[0] < target_channels:
-        padding = np.zeros(
-            (target_channels - current.shape[0], current.shape[1], current.shape[2]),
-            dtype=current.dtype,
-        )
-        current = np.concatenate([current, padding], axis=0)
-
+    current, _, _, _ = _normalize_routerset_array_impl(
+        array,
+        source_dataset=source_dataset,
+        target_channels=target_channels,
+    )
+    if not current.flags.writeable:
+        current = np.array(current, copy=True)
     return torch.from_numpy(current)
 
 
@@ -586,15 +749,51 @@ def describe_routerset_array(
     source_dataset: str,
     target_channels: int = 8,
 ) -> dict[str, Any]:
-    array = np.load(path)
-    normalized = normalize_routerset_array(array, source_dataset=source_dataset, target_channels=target_channels)
+    array = np.load(path, mmap_mode="r")
+    normalized, sanitization, normalization_mode, original_dtype = _normalize_routerset_array_impl(
+        array,
+        source_dataset=source_dataset,
+        target_channels=target_channels,
+    )
     return {
         "path": str(path),
         "original_shape": list(array.shape),
-        "original_dtype": str(array.dtype),
+        "original_dtype": original_dtype,
         "normalized_shape": list(normalized.shape),
         "source_dataset": source_dataset,
+        "normalization_mode": normalization_mode,
+        "had_non_finite": bool(sanitization["had_non_finite"]),
+        "non_finite_count": int(sanitization["non_finite_count"]),
+        "nan_count": int(sanitization["nan_count"]),
+        "pos_inf_count": int(sanitization["pos_inf_count"]),
+        "neg_inf_count": int(sanitization["neg_inf_count"]),
     }
+
+
+def sample_routerset_raw_array(path: Union[str, Path]) -> dict[str, Any]:
+    raw_array = np.load(path, mmap_mode="r")
+    raw_view = np.asarray(raw_array)
+    sample: dict[str, Any] = {
+        "raw_shape": list(raw_view.shape),
+        "raw_dtype": str(raw_view.dtype),
+    }
+
+    finite_mask = np.isfinite(raw_view)
+    non_finite_count = int((~finite_mask).sum())
+    sample["raw_non_finite_count"] = non_finite_count
+    sample["raw_zero_fraction"] = float(np.count_nonzero(raw_view == 0) / raw_view.size) if raw_view.size > 0 else 0.0
+
+    if non_finite_count >= raw_view.size:
+        sample["raw_min"] = 0.0
+        sample["raw_max"] = 0.0
+        sample["raw_mean"] = 0.0
+        return sample
+
+    finite_values = raw_view[finite_mask] if non_finite_count > 0 else raw_view.reshape(-1)
+    sample["raw_min"] = float(finite_values.min())
+    sample["raw_max"] = float(finite_values.max())
+    sample["raw_mean"] = float(finite_values.mean())
+    return sample
 
 
 def resolve_release_name(release_name: Optional[str] = None) -> str:
@@ -660,7 +859,7 @@ def resolve_student_checkpoint_report(
             "checkpoint_path": "",
         }
         try:
-            checkpoint_path = _resolve_student_checkpoint_path(
+            checkpoint_path = _loading_module()._resolve_student_checkpoint_path(
                 task=task,
                 training=training,
                 n_shots=n_shots,
@@ -669,6 +868,13 @@ def resolve_student_checkpoint_report(
             if not checkpoint_path:
                 raise FileNotFoundError(f"Checkpoint path was empty for expert {task!r}.")
             item["checkpoint_path"] = checkpoint_path
+            if weights_dir is not None:
+                try:
+                    relative_source = Path(checkpoint_path).resolve().relative_to(Path(weights_dir).resolve())
+                    item["source_path"] = str(relative_source)
+                    item["deterministic_path"] = str(Path(weights_dir) / relative_source)
+                except ValueError:
+                    pass
             if not item["deterministic_path"]:
                 item["deterministic_path"] = checkpoint_path
         except BaseException as error:
@@ -696,6 +902,11 @@ class RoutersetRecord:
     tile_origin: List[int]
     tile_size: List[int]
     is_tiled: bool
+    source_had_non_finite: bool
+    source_non_finite_count: int
+    normalization_mode: str
+    used_compatibility_path: bool
+    used_manifest_shape: bool
 
 
 def build_routerset_training_tensor(
@@ -711,6 +922,284 @@ def build_routerset_training_tensor(
         target_channels=target_channels,
     ).float()
     return crop_or_pad_routerset_tensor(image, target_size=target_size)
+
+
+def _load_student_expert_models(
+    *,
+    expert_names: Sequence[str],
+    training: str,
+    n_shots: int,
+    weights_dir: Optional[str],
+    device: Optional[str] = None,
+) -> dict[str, torch.nn.Module]:
+    models: dict[str, torch.nn.Module] = {}
+    model_device = torch.device(device) if device is not None else None
+    for expert_name in expert_names:
+        model = _loading_module().load_student(
+            task=expert_name,
+            training=training,
+            n_shots=n_shots,
+            weights_dir=weights_dir,
+            auto_load_weights=True,
+        )
+        if model_device is not None:
+            model = model.to(model_device)
+        model.eval()
+        models[expert_name] = model
+    return models
+
+
+def _reduce_expert_output_to_routing_score(logits: torch.Tensor) -> float:
+    if logits.ndim != 4:
+        raise ValueError(f"Expected expert logits with shape (batch, channels, height, width), got {tuple(logits.shape)}")
+    if logits.shape[1] <= 0:
+        raise ValueError("Expert logits must contain at least one output channel.")
+
+    if logits.shape[1] == 1:
+        probs = torch.sigmoid(logits)
+        flat = probs.flatten(start_dim=1)
+        k = max(1, flat.shape[1] // 256)
+        score = flat.topk(k, dim=1).values.mean()
+        return float(score.detach().cpu().item())
+
+    probs = torch.softmax(logits, dim=1)
+    foreground = probs[:, 1:, :, :]
+    if foreground.numel() <= 0:
+        foreground = probs
+    score = foreground.mean()
+    return float(score.detach().cpu().item())
+
+
+def _f1_at_threshold(scores: Sequence[float], labels: Sequence[int], threshold: float) -> tuple[float, int, int, int]:
+    tp = fp = fn = 0
+    for score, label in zip(scores, labels):
+        pred = 1 if float(score) >= float(threshold) else 0
+        if pred and label:
+            tp += 1
+        elif pred and not label:
+            fp += 1
+        elif (not pred) and label:
+            fn += 1
+    precision = tp / (tp + fp + 1e-8)
+    recall = tp / (tp + fn + 1e-8)
+    f1 = 2 * precision * recall / (precision + recall + 1e-8)
+    return float(f1), int(tp), int(fp), int(fn)
+
+
+def _calibrate_routing_thresholds(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    expert_names: Sequence[str],
+    score_rows: Sequence[Optional[Mapping[str, float]]],
+) -> dict[str, float]:
+    thresholds: dict[str, float] = {}
+    expert_set = set(expert_names)
+    for expert_name in expert_names:
+        labels: list[int] = []
+        scores: list[float] = []
+        candidates = {0.5}
+        for row, score_row in zip(rows, score_rows):
+            if row.get("source_dataset") not in expert_set:
+                continue
+            if row.get("moe_split", row.get("source_split")) != "validation":
+                continue
+            if score_row is None:
+                continue
+            score = float(score_row[expert_name])
+            scores.append(score)
+            labels.append(1 if row.get("source_dataset") == expert_name else 0)
+            candidates.add(score)
+
+        if not scores:
+            thresholds[expert_name] = 0.5
+            continue
+
+        best_threshold = 0.5
+        best_f1, _, _, _ = _f1_at_threshold(scores, labels, best_threshold)
+        for threshold in sorted(candidates):
+            f1, _, _, _ = _f1_at_threshold(scores, labels, threshold)
+            if f1 > best_f1 + 1e-12 or (abs(f1 - best_f1) <= 1e-12 and abs(threshold - 0.5) < abs(best_threshold - 0.5)):
+                best_f1 = f1
+                best_threshold = float(threshold)
+        thresholds[expert_name] = float(best_threshold)
+    return thresholds
+
+
+def manifest_has_generated_routing_targets(
+    routerset_dir: Union[str, Path],
+    *,
+    manifest_path: Optional[Union[str, Path]] = None,
+    expert_names: Sequence[str],
+) -> bool:
+    expert_set = set(expert_names)
+    for row in load_routerset_manifest_rows(routerset_dir, manifest_path):
+        if row.get("source_dataset") not in expert_set:
+            continue
+        target = row.get("routing_target")
+        source = row.get("routing_target_source")
+        experts = row.get("routing_target_experts")
+        scores = row.get("routing_scores")
+        if not isinstance(target, list) or len(target) != len(expert_names):
+            return False
+        if source != ROUTING_TARGET_SOURCE:
+            return False
+        if not isinstance(experts, list):
+            return False
+        if not isinstance(scores, dict) or set(scores.keys()) != expert_set:
+            return False
+    return True
+
+
+def generate_routerset_routing_targets(
+    routerset_dir: Union[str, Path],
+    *,
+    manifest_path: Optional[Union[str, Path]] = None,
+    expert_names: Sequence[str],
+    training: str = "finetuning",
+    n_shots: int = 5000,
+    weights_dir: Optional[str] = None,
+    target_size: int = DEFAULT_ROUTERSET_TARGET_SIZE,
+    target_channels: int = 8,
+    output_path: Optional[Union[str, Path]] = None,
+    report_path: Optional[Union[str, Path]] = None,
+    force: bool = False,
+    inference_batch_size: int = 64,
+    inference_device: Optional[str] = None,
+    inference_use_amp: bool = True,
+) -> Path:
+    source_manifest_path = resolve_routerset_manifest_path(routerset_dir, manifest_path)
+    destination = Path(output_path) if output_path is not None else source_manifest_path
+    rows = load_routerset_manifest_rows(routerset_dir, source_manifest_path)
+    if not force and manifest_has_generated_routing_targets(routerset_dir, manifest_path=source_manifest_path, expert_names=expert_names):
+        if report_path is not None:
+            save_json(
+                report_path,
+                {
+                    "status": "reused",
+                    "manifest_path": str(source_manifest_path),
+                    "expert_names": list(expert_names),
+                    "target_source": ROUTING_TARGET_SOURCE,
+                },
+            )
+        return destination
+
+    if inference_batch_size <= 0:
+        raise ValueError("inference_batch_size must be a positive integer.")
+
+    target_device = inference_device if inference_device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
+    expert_models = _load_student_expert_models(
+        expert_names=expert_names,
+        training=training,
+        n_shots=n_shots,
+        weights_dir=weights_dir,
+        device=target_device,
+    )
+    expert_set = set(expert_names)
+    score_rows: list[Optional[dict[str, float]]] = [None] * len(rows)
+    indexed_rows = [
+        (index, row)
+        for index, row in enumerate(rows)
+        if row.get("source_dataset") in expert_set
+    ]
+    if not indexed_rows:
+        raise ValueError(f"No manifest rows matched expert list {expert_set}.")
+
+    for batch_start in range(0, len(indexed_rows), inference_batch_size):
+        batch_slice = indexed_rows[batch_start : batch_start + inference_batch_size]
+        batch_row_indices = [index for index, _ in batch_slice]
+        batch_tensors = []
+        for _, row in batch_slice:
+            image_path = routerset_image_path(routerset_dir, row)
+            if not image_path.exists():
+                raise FileNotFoundError(f"Routerset image for routing target generation not found: {image_path}")
+            array = np.load(image_path)
+            tensor = build_routerset_training_tensor(
+                array,
+                source_dataset=str(row["source_dataset"]),
+                target_size=target_size,
+                target_channels=target_channels,
+            )
+            batch_tensors.append(tensor)
+
+        batch_inputs = torch.stack(batch_tensors, dim=0)
+        if target_device:
+            batch_inputs = batch_inputs.to(target_device)
+
+        with torch.no_grad():
+            amp_ctx = torch.amp.autocast(
+                device_type="cuda" if target_device.startswith("cuda") else "cpu",
+                enabled=bool(inference_use_amp and target_device.startswith("cuda")),
+            )
+            with amp_ctx:
+                for expert_name, model in expert_models.items():
+                    logits = model(batch_inputs)
+                    batch_scores = [
+                        _reduce_expert_output_to_routing_score(logits[sample_index : sample_index + 1])
+                        for sample_index in range(logits.shape[0])
+                    ]
+                    for row_index, score in zip(batch_row_indices, batch_scores):
+                        row_scores = score_rows[row_index]
+                        if row_scores is None:
+                            row_scores = {}
+                            score_rows[row_index] = row_scores
+                        row_scores[expert_name] = score
+
+    thresholds = _calibrate_routing_thresholds(
+        rows,
+        expert_names=expert_names,
+        score_rows=score_rows,
+    )
+
+    updated_rows: list[dict[str, Any]] = []
+    fallback_count = 0
+    active_count_sum = 0
+    activation_counts: dict[str, int] = {expert: 0 for expert in expert_names}
+    for index, row in enumerate(rows):
+        updated = dict(row)
+        row_scores = score_rows[index]
+        if row_scores is not None:
+            active = [
+                expert_name
+                for expert_name in expert_names
+                if float(row_scores[expert_name]) >= float(thresholds[expert_name])
+            ]
+            if not active:
+                fallback_count += 1
+                best_expert = max(expert_names, key=lambda name: float(row_scores[name]))
+                active = [best_expert]
+            target = [1.0 if expert_name in active else 0.0 for expert_name in expert_names]
+            active_count_sum += len(active)
+            for expert_name in active:
+                activation_counts[expert_name] += 1
+            updated["routing_target"] = target
+            updated["routing_target_experts"] = list(active)
+            updated["routing_scores"] = {expert_name: float(row_scores[expert_name]) for expert_name in expert_names}
+            updated["routing_target_source"] = ROUTING_TARGET_SOURCE
+        updated_rows.append(updated)
+
+    payload = "\n".join(json.dumps(row, sort_keys=True) for row in updated_rows) + "\n"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(payload, encoding="utf-8")
+
+    if report_path is not None:
+        generated_rows = sum(1 for row in updated_rows if row.get("routing_target_source") == ROUTING_TARGET_SOURCE)
+        average_active = (active_count_sum / generated_rows) if generated_rows > 0 else 0.0
+        save_json(
+            report_path,
+            {
+                "status": "generated",
+                "manifest_path": str(destination),
+                "target_source": ROUTING_TARGET_SOURCE,
+                "expert_names": list(expert_names),
+                "thresholds_by_expert": thresholds,
+                "activation_counts_by_expert": activation_counts,
+                "generated_row_count": int(generated_rows),
+                "fallback_row_count": int(fallback_count),
+                "average_active_experts": float(average_active),
+            },
+        )
+
+    return destination
 
 
 def crop_or_pad_routerset_tensor(image: torch.Tensor, *, target_size: int) -> torch.Tensor:
@@ -732,9 +1221,7 @@ def crop_or_pad_routerset_tensor(image: torch.Tensor, *, target_size: int) -> to
             dtype=image.dtype,
             device=image.device,
         )
-        offset_y = (target_size - height) // 2
-        offset_x = (target_size - width) // 2
-        padded[:, offset_y : offset_y + height, offset_x : offset_x + width] = image
+        padded[:, :height, :width] = image
         image = padded
 
     return image
@@ -754,6 +1241,464 @@ def anomaly_tile_origins(height: int, width: int, target_size: int) -> List[tupl
         x_starts.append(width - target_size)
 
     return [(y, x) for y in y_starts for x in x_starts]
+
+
+def _materialized_routerset_dataset_root(path: Union[str, Path]) -> Path:
+    return ensure_dir(path)
+
+
+def _materialized_routerset_root(base_dir: Union[str, Path]) -> Path:
+    return _materialized_routerset_dataset_root(Path(base_dir) / "routerset_materialized")
+
+
+def _materialized_routerset_manifest_path(dataset_root: Union[str, Path], *, target_size: int) -> Path:
+    return _materialized_routerset_dataset_root(dataset_root) / f"manifest_{int(target_size)}.jsonl"
+
+
+def _materialized_routerset_fault_rows_manifest_path(dataset_root: Union[str, Path], *, target_size: int) -> Path:
+    return _materialized_routerset_dataset_root(dataset_root) / f"fault_rows_{int(target_size)}.jsonl"
+
+
+def _materialized_routerset_image_dir(
+    dataset_root: Union[str, Path],
+    *,
+    source_dataset: str,
+    source_split: str,
+) -> Path:
+    root = _materialized_routerset_dataset_root(dataset_root)
+    return ensure_dir(root / "images" / source_dataset / source_split)
+
+
+def _tile_routerset_array(
+    normalized: np.ndarray,
+    *,
+    target_size: int,
+) -> List[tuple[np.ndarray, tuple[int, int]]]:
+    _, height, width = normalized.shape
+    tile_origins = anomaly_tile_origins(height, width, target_size)
+    tiles: List[tuple[np.ndarray, tuple[int, int]]] = []
+    for tile_y, tile_x in tile_origins:
+        tile = normalized[:, tile_y : tile_y + target_size, tile_x : tile_x + target_size]
+        tensor = crop_or_pad_routerset_tensor(torch.from_numpy(tile), target_size=target_size)
+        tiles.append((tensor.numpy(), (tile_y, tile_x)))
+    return tiles
+
+
+def _write_materialized_routerset_sample(
+    *,
+    dataset_root: Union[str, Path],
+    row: Mapping[str, Any],
+    array: np.ndarray,
+    source_image_path: Union[str, Path],
+    patch_x: int,
+    patch_y: int,
+    target_size: int,
+    image_ref_mode: str,
+) -> tuple[dict[str, Any], bool]:
+    tile_row = dict(row)
+    tile_row["patch_x"] = int(patch_x)
+    tile_row["patch_y"] = int(patch_y)
+    tile_row["patch_width"] = int(target_size)
+    tile_row["patch_height"] = int(target_size)
+    tile_row["image_ref"] = f"{row.get('image_ref', 'materialized')}::{image_ref_mode}:{int(patch_x)}:{int(patch_y)}:{int(target_size)}:{int(target_size)}"
+    tile_row["materialized_from"] = str(source_image_path)
+    tile_filename = routerset_patch_token(tile_row)
+    tile_path = _materialized_routerset_image_dir(
+        dataset_root,
+        source_dataset=str(row["source_dataset"]),
+        source_split=str(row["source_split"]),
+    ) / tile_filename
+    tile_row["materialized_image_path"] = str(tile_path)
+    created = not tile_path.exists()
+    if created:
+        np.save(tile_path, array.astype(np.float32, copy=False))
+    return tile_row, created
+
+
+def _classify_materialized_routerset_tile_faults(array: np.ndarray) -> List[str]:
+    if array.size <= 0:
+        return ["empty_materialized_tile"]
+    if not np.isfinite(array).all():
+        return ["non_finite_materialized_tile"]
+    if float(np.max(array)) == 0.0 and float(np.min(array)) == 0.0:
+        return ["all_zero_materialized_tile"]
+    return []
+
+
+def _append_materialized_fault_example(
+    summary: dict[str, Any],
+    *,
+    fault_code: str,
+    row: Mapping[str, Any],
+) -> None:
+    examples = summary["fault_examples_by_code"].setdefault(fault_code, [])
+    if len(examples) >= DEFAULT_ROUTERSET_FAULT_EXAMPLES_PER_CODE:
+        return
+    examples.append(
+        {
+            "source_dataset": str(row["source_dataset"]),
+            "source_split": str(row["source_split"]),
+            "source_sample_id": str(row["source_sample_id"]),
+            "patch_x": int(row.get("patch_x") or 0),
+            "patch_y": int(row.get("patch_y") or 0),
+            "patch_width": row.get("patch_width"),
+            "patch_height": row.get("patch_height"),
+            "record_status": str(row.get("record_status", "")),
+            "selection_bucket": str(row.get("selection_bucket", "")),
+            "candidate_materialized_image_path": str(row.get("candidate_materialized_image_path") or row.get("materialized_image_path") or ""),
+        }
+    )
+
+
+def _collect_routerset_training_blockers(
+    dataset_report: Mapping[str, Any],
+    *,
+    expert_names: Sequence[str],
+) -> List[dict[str, Any]]:
+    blockers: List[dict[str, Any]] = []
+    for split_name in ("train", "validation"):
+        split_report = dataset_report[split_name]
+        raw_counts = split_report["raw_counts_by_expert"]
+        raw_positive_counts = split_report["raw_positive_counts_by_expert"]
+        for expert_name in expert_names:
+            if int(raw_counts.get(expert_name, 0)) <= 0:
+                blockers.append(
+                    {
+                        "code": "missing_records",
+                        "expert": expert_name,
+                        "split": split_name,
+                        "count": int(raw_counts.get(expert_name, 0)),
+                    }
+                )
+            if int(raw_positive_counts.get(expert_name, 0)) <= 0:
+                blockers.append(
+                    {
+                        "code": "missing_positive_rows",
+                        "expert": expert_name,
+                        "split": split_name,
+                        "count": int(raw_positive_counts.get(expert_name, 0)),
+                    }
+                )
+    return blockers
+
+
+def _materialize_routerset_manifest_to_dataset_root(
+    *,
+    routerset_dir: Union[str, Path],
+    manifest_path: Union[str, Path],
+    dataset_root: Union[str, Path],
+    expert_names: Sequence[str],
+    target_size: int,
+    target_channels: int,
+    materialize_all: bool,
+    strict_missing: bool,
+    clean_export: bool = False,
+) -> tuple[Path, dict[str, Any]]:
+    active_manifest_path = Path(manifest_path)
+    rows = load_routerset_manifest_rows(routerset_dir, active_manifest_path)
+    expert_set = set(expert_names)
+    materialized_manifest_path = _materialized_routerset_manifest_path(dataset_root, target_size=target_size)
+    fault_rows_manifest_path = _materialized_routerset_fault_rows_manifest_path(dataset_root, target_size=target_size)
+    rewritten_rows: List[dict[str, Any]] = []
+    fault_rows: List[dict[str, Any]] = []
+    summary: dict[str, Any] = {
+        "source_row_count": 0,
+        "materialized_row_count": 0,
+        "source_rows_by_expert": {},
+        "materialized_rows_by_expert": {},
+        "created_file_count": 0,
+        "reused_file_count": 0,
+        "missing_source_rows": 0,
+        "passthrough_rows": 0,
+        "metadata_only_rows": 0,
+        "single_file_source_rows": 0,
+        "tiled_source_rows": 0,
+        "materialize_all": bool(materialize_all),
+        "clean_export": bool(clean_export),
+        "fault_row_count": 0,
+        "fault_rows_by_code": {},
+        "fault_rows_by_expert": {},
+        "fault_examples_by_code": {},
+        "excluded_row_count": 0,
+        "excluded_rows_by_expert": {},
+        "fault_rows_manifest_path": str(fault_rows_manifest_path) if materialize_all else "",
+    }
+
+    for row in rows:
+        source_dataset = str(row["source_dataset"])
+        summary["source_row_count"] += 1
+        summary["source_rows_by_expert"][source_dataset] = int(summary["source_rows_by_expert"].get(source_dataset, 0)) + 1
+        if source_dataset not in expert_set:
+            rewritten_rows.append(dict(row))
+            summary["passthrough_rows"] += 1
+            continue
+
+        patch_width = row.get("patch_width")
+        patch_height = row.get("patch_height")
+        if not materialize_all:
+            if patch_width == target_size and patch_height == target_size:
+                rewritten_rows.append(dict(row))
+                summary["passthrough_rows"] += 1
+                continue
+
+            # Smaller routerset patches are padded during training; only materialize
+            # samples whose size is unknown or larger than the canonical tile size.
+            if (
+                patch_width is not None
+                and patch_height is not None
+                and patch_width <= target_size
+                and patch_height <= target_size
+            ):
+                rewritten_rows.append(dict(row))
+                summary["passthrough_rows"] += 1
+                continue
+
+            # Fire patches currently use full/full metadata even though the stored
+            # arrays are already 256x256, so avoid reopening every file on startup.
+            if source_dataset == "fire" and patch_width is None and patch_height is None:
+                source_image_path = routerset_image_path(routerset_dir, row)
+                normalized_row = dict(row)
+                normalized_row["patch_width"] = int(target_size)
+                normalized_row["patch_height"] = int(target_size)
+                normalized_row["materialized_image_path"] = str(source_image_path)
+                rewritten_rows.append(normalized_row)
+                summary["metadata_only_rows"] += 1
+                continue
+
+        source_image_path = routerset_image_path(routerset_dir, row)
+        if not source_image_path.exists():
+            summary["missing_source_rows"] += 1
+            if strict_missing:
+                raise FileNotFoundError(f"Missing routerset source image for row {routerset_patch_token(row)}: {source_image_path}")
+            rewritten_rows.append(dict(row))
+            continue
+
+        array = np.load(source_image_path, mmap_mode="r")
+        if materialize_all and source_dataset != "anomaly_detection":
+            prepared = build_routerset_training_tensor(
+                array,
+                source_dataset=source_dataset,
+                target_size=target_size,
+                target_channels=target_channels,
+            ).numpy()
+            _, height, width = prepared.shape
+        else:
+            prepared = normalize_routerset_array(
+                array,
+                source_dataset=source_dataset,
+                target_channels=target_channels,
+            ).numpy()
+            _, height, width = prepared.shape
+        base_patch_x = int(row.get("patch_x") or 0)
+        base_patch_y = int(row.get("patch_y") or 0)
+
+        if not materialize_all:
+            needs_materialization = (
+                height != target_size
+                or width != target_size
+                or patch_width != target_size
+                or patch_height != target_size
+            )
+            if not needs_materialization:
+                rewritten_rows.append(dict(row))
+                summary["passthrough_rows"] += 1
+                continue
+
+        if source_dataset == "anomaly_detection":
+            tile_payloads = [
+                (tile_array, base_patch_x + int(tile_x), base_patch_y + int(tile_y), "tile")
+                for tile_array, (tile_y, tile_x) in _tile_routerset_array(prepared, target_size=target_size)
+            ]
+            summary["tiled_source_rows"] += 1
+        else:
+            cropped = prepared if materialize_all else crop_or_pad_routerset_tensor(torch.from_numpy(prepared), target_size=target_size).numpy()
+            tile_payloads = [(cropped, base_patch_x, base_patch_y, "materialized")]
+            summary["single_file_source_rows"] += 1
+
+        for tile_array, tile_patch_x, tile_patch_y, image_ref_mode in tile_payloads:
+            tile_row_preview = dict(row)
+            tile_row_preview["patch_x"] = int(tile_patch_x)
+            tile_row_preview["patch_y"] = int(tile_patch_y)
+            tile_row_preview["patch_width"] = int(target_size)
+            tile_row_preview["patch_height"] = int(target_size)
+            tile_row_preview["image_ref"] = (
+                f"{row.get('image_ref', 'materialized')}::{image_ref_mode}:{int(tile_patch_x)}:{int(tile_patch_y)}:{int(target_size)}:{int(target_size)}"
+            )
+            tile_row_preview["materialized_from"] = str(source_image_path)
+            tile_row_preview["candidate_materialized_image_path"] = str(
+                _materialized_routerset_image_dir(
+                    dataset_root,
+                    source_dataset=str(row["source_dataset"]),
+                    source_split=str(row["source_split"]),
+                )
+                / routerset_patch_token(tile_row_preview)
+            )
+            fault_codes = _classify_materialized_routerset_tile_faults(tile_array)
+            if fault_codes:
+                summary["fault_row_count"] += 1
+                summary["fault_rows_by_expert"][source_dataset] = int(summary["fault_rows_by_expert"].get(source_dataset, 0)) + 1
+                fault_row = dict(tile_row_preview)
+                fault_row["fault_codes"] = list(fault_codes)
+                fault_row["fault_action"] = "excluded_from_clean_export" if clean_export else "retained_in_export"
+                for fault_code in fault_codes:
+                    summary["fault_rows_by_code"][fault_code] = int(summary["fault_rows_by_code"].get(fault_code, 0)) + 1
+                    _append_materialized_fault_example(summary, fault_code=fault_code, row=fault_row)
+                if clean_export:
+                    summary["excluded_row_count"] += 1
+                    summary["excluded_rows_by_expert"][source_dataset] = int(summary["excluded_rows_by_expert"].get(source_dataset, 0)) + 1
+                    fault_rows.append(fault_row)
+                    continue
+                fault_rows.append(fault_row)
+
+            tile_row, created = _write_materialized_routerset_sample(
+                dataset_root=dataset_root,
+                row=row,
+                array=tile_array,
+                source_image_path=source_image_path,
+                patch_x=tile_patch_x,
+                patch_y=tile_patch_y,
+                target_size=target_size,
+                image_ref_mode=image_ref_mode,
+            )
+            rewritten_rows.append(tile_row)
+            summary["materialized_row_count"] += 1
+            summary["materialized_rows_by_expert"][source_dataset] = int(summary["materialized_rows_by_expert"].get(source_dataset, 0)) + 1
+            if created:
+                summary["created_file_count"] += 1
+            else:
+                summary["reused_file_count"] += 1
+
+    payload = "\n".join(json.dumps(row, sort_keys=True) for row in rewritten_rows) + "\n"
+    materialized_manifest_path.write_text(payload, encoding="utf-8")
+    if materialize_all:
+        fault_payload = "\n".join(json.dumps(row, sort_keys=True) for row in fault_rows)
+        fault_rows_manifest_path.write_text((fault_payload + "\n") if fault_payload else "", encoding="utf-8")
+    return materialized_manifest_path, summary
+
+
+def materialize_routerset_training_manifest(
+    *,
+    routerset_dir: Union[str, Path],
+    manifest_path: Union[str, Path],
+    materialization_root: Union[str, Path],
+    expert_names: Sequence[str],
+    target_size: int = DEFAULT_ROUTERSET_TARGET_SIZE,
+    target_channels: int = 8,
+) -> Path:
+    materialized_manifest_path, _ = _materialize_routerset_manifest_to_dataset_root(
+        routerset_dir=routerset_dir,
+        manifest_path=manifest_path,
+        dataset_root=_materialized_routerset_root(materialization_root),
+        expert_names=expert_names,
+        target_size=target_size,
+        target_channels=target_channels,
+        materialize_all=False,
+        strict_missing=False,
+    )
+    return materialized_manifest_path
+
+
+def materialize_routerset_dataset(
+    *,
+    routerset_dir: Union[str, Path],
+    output_dir: Union[str, Path],
+    manifest_path: Optional[Union[str, Path]] = None,
+    expert_names: Optional[Sequence[str]] = None,
+    target_size: int = DEFAULT_ROUTERSET_TARGET_SIZE,
+    target_channels: int = 8,
+    clean_export: bool = False,
+) -> dict[str, Any]:
+    experts = list(expert_names or DEFAULT_ROUTERSET_EXPERTS)
+    dataset_root = _materialized_routerset_dataset_root(output_dir)
+    active_manifest_path = resolve_routerset_manifest_path(routerset_dir, manifest_path)
+    materialized_manifest_path, core_summary = _materialize_routerset_manifest_to_dataset_root(
+        routerset_dir=routerset_dir,
+        manifest_path=active_manifest_path,
+        dataset_root=dataset_root,
+        expert_names=experts,
+        target_size=target_size,
+        target_channels=target_channels,
+        materialize_all=True,
+        strict_missing=True,
+        clean_export=clean_export,
+    )
+    dataset_report = collect_routerset_dataset_report(
+        routerset_dir,
+        manifest_path=materialized_manifest_path,
+        expert_names=experts,
+        target_size=target_size,
+        target_channels=target_channels,
+        balanced_sampling=True,
+        num_workers=0,
+    )
+    validate_materialized_routerset_export_report(
+        dataset_report,
+        expert_names=experts,
+        target_size=target_size,
+        target_channels=target_channels,
+    )
+    dataset_report_path = save_json(dataset_root / "dataset_report.json", dataset_report)
+    training_blockers = _collect_routerset_training_blockers(dataset_report, expert_names=experts)
+    fault_report = {
+        "export_mode": "clean" if clean_export else "canonical",
+        "phi2fm_reference": {
+            "repository": "https://github.com/carlos-collado/phi2FM",
+            "training_alignment": "roads_and_lc_follow_generic_downstream_student_reflectance_scaling",
+        },
+        "row_fault_count": int(core_summary["fault_row_count"]),
+        "row_faults_by_code": dict(core_summary["fault_rows_by_code"]),
+        "row_faults_by_expert": dict(core_summary["fault_rows_by_expert"]),
+        "fault_examples_by_code": dict(core_summary["fault_examples_by_code"]),
+        "excluded_row_count": int(core_summary["excluded_row_count"]),
+        "excluded_rows_by_expert": dict(core_summary["excluded_rows_by_expert"]),
+        "fault_rows_manifest_path": str(core_summary.get("fault_rows_manifest_path", "")),
+        "training_ready": not training_blockers,
+        "training_blockers": training_blockers,
+    }
+    fault_report_path = save_json(dataset_root / "fault_report.json", fault_report)
+
+    label_vocab_path = resolve_routerset_dataset_root(routerset_dir) / "label_vocab.json"
+    copied_label_vocab_path = ""
+    if label_vocab_path.exists():
+        copied = dataset_root / "label_vocab.json"
+        shutil.copy2(label_vocab_path, copied)
+        copied_label_vocab_path = str(copied)
+
+    materialized_paths = {
+        str(row["materialized_image_path"])
+        for row in load_routerset_manifest_rows(routerset_dir, materialized_manifest_path)
+        if row.get("materialized_image_path")
+    }
+    materialized_total_bytes = sum(Path(path).stat().st_size for path in materialized_paths)
+    summary = {
+        "status": "materialized",
+        "routerset_dir": str(routerset_dir),
+        "source_manifest_path": str(active_manifest_path),
+        "materialized_dataset_root": str(dataset_root),
+        "manifest_path": str(materialized_manifest_path),
+        "dataset_report_path": str(dataset_report_path),
+        "fault_report_path": str(fault_report_path),
+        "label_vocab_path": copied_label_vocab_path,
+        "experts": experts,
+        "target_size": int(target_size),
+        "target_channels": int(target_channels),
+        "export_mode": "clean" if clean_export else "canonical",
+        "materialized_unique_file_count": int(len(materialized_paths)),
+        "materialized_total_bytes": int(materialized_total_bytes),
+        "corrections_applied": [
+            "all_selected_rows_are_saved_as_concrete_npy_files",
+            f"all_exported_tensors_are_channel_first_8x{int(target_size)}x{int(target_size)}",
+            "roads_and_lc_follow_phi2fm_student_band_mapping_and_scaling",
+            "small_patches_are_zero_padded_after_normalization",
+            "oversized_anomaly_detection_arrays_are_tiled_deterministically",
+            "swapped_coordinate_source_paths_are_resolved_and_rewritten_to_canonical_filenames",
+        ],
+        "dataset_report": dataset_report,
+        "fault_report": fault_report,
+        "materialization_summary": core_summary,
+    }
+    save_json(dataset_root / "materialization_summary.json", summary)
+    return summary
 
 
 class RoutersetMoEDataset(Dataset):
@@ -794,14 +1739,42 @@ class RoutersetMoEDataset(Dataset):
             image_path = routerset_image_path(self.routerset_dir, row)
             if not image_path.exists():
                 continue
+            used_compatibility_path = routerset_uses_compatibility_path(row, image_path)
 
-            description = describe_routerset_array(
-                image_path,
-                source_dataset=source_dataset,
-                target_channels=self.target_channels,
+            patch_width = row.get("patch_width")
+            patch_height = row.get("patch_height")
+            use_manifest_shape = (
+                isinstance(patch_width, (int, float))
+                and isinstance(patch_height, (int, float))
+                and int(patch_width) > 0
+                and int(patch_height) > 0
             )
-            target = [1.0 if name == source_dataset else 0.0 for name in self.expert_names]
-            normalized_shape = list(description["normalized_shape"])
+            description: Optional[dict[str, Any]] = None
+            if use_manifest_shape:
+                normalized_shape = [self.target_channels, int(patch_height), int(patch_width)]
+                original_shape = list(normalized_shape)
+                source_had_non_finite = False
+                source_non_finite_count = 0
+                normalization_mode = infer_routerset_normalization_mode(
+                    source_dataset=source_dataset,
+                    target_channels=self.target_channels,
+                )
+            else:
+                description = describe_routerset_array(
+                    image_path,
+                    source_dataset=source_dataset,
+                    target_channels=self.target_channels,
+                )
+                normalized_shape = list(description["normalized_shape"])
+                original_shape = list(description["original_shape"])
+                source_had_non_finite = bool(description.get("had_non_finite", False))
+                source_non_finite_count = int(description.get("non_finite_count", 0))
+                normalization_mode = str(description.get("normalization_mode", "channel_adapter"))
+            raw_target = row.get("routing_target")
+            if isinstance(raw_target, list) and len(raw_target) == len(self.expert_names):
+                target = [float(value) for value in raw_target]
+            else:
+                target = [1.0 if name == source_dataset else 0.0 for name in self.expert_names]
             tile_origins = [(0, 0)]
             if source_dataset == "anomaly_detection":
                 _, height, width = normalized_shape
@@ -822,12 +1795,17 @@ class RoutersetMoEDataset(Dataset):
                         target=target,
                         record_status=row["record_status"],
                         label_names=list(row["label_names"]),
-                        original_shape=list(description["original_shape"]),
+                        original_shape=original_shape,
                         normalized_shape=normalized_shape,
                         training_shape=[self.target_channels, self.target_size, self.target_size],
                         tile_origin=[tile_y, tile_x],
                         tile_size=[self.target_size, self.target_size],
                         is_tiled=len(tile_origins) > 1,
+                        source_had_non_finite=source_had_non_finite,
+                        source_non_finite_count=source_non_finite_count,
+                        normalization_mode=normalization_mode,
+                        used_compatibility_path=used_compatibility_path,
+                        used_manifest_shape=use_manifest_shape,
                     )
                 )
 
@@ -880,8 +1858,16 @@ class RoutersetMoEDataset(Dataset):
         positive_counts: Dict[str, int] = {name: 0 for name in self.expert_names}
         raw_positive_counts: Dict[str, int] = {name: 0 for name in self.expert_names}
         tiled_counts: Dict[str, int] = {name: 0 for name in self.expert_names}
+        non_finite_source_counts: Dict[str, int] = {name: 0 for name in self.expert_names}
+        sanitized_tensor_counts: Dict[str, int] = {name: 0 for name in self.expert_names}
+        non_finite_value_counts: Dict[str, int] = {name: 0 for name in self.expert_names}
+        compatibility_path_counts: Dict[str, int] = {name: 0 for name in self.expert_names}
+        manifest_shape_counts: Dict[str, int] = {name: 0 for name in self.expert_names}
+        normalization_modes: Dict[str, Dict[str, int]] = {name: {} for name in self.expert_names}
+        manifest_shape_samples: Dict[str, List[dict[str, Any]]] = {name: [] for name in self.expert_names}
         seen_rows: set[tuple[str, str]] = set()
         seen_positive_rows: set[tuple[str, str]] = set()
+        seen_non_finite_rows: set[tuple[str, str]] = set()
         for record in self.records:
             counts[record.source_dataset] += 1
             statuses[record.record_status] = statuses.get(record.record_status, 0) + 1
@@ -908,9 +1894,36 @@ class RoutersetMoEDataset(Dataset):
             if raw_key not in seen_rows:
                 seen_rows.add(raw_key)
                 raw_counts[record.source_dataset] += 1
+                mode_counts = normalization_modes[record.source_dataset]
+                mode_counts[record.normalization_mode] = mode_counts.get(record.normalization_mode, 0) + 1
+                if record.used_compatibility_path:
+                    compatibility_path_counts[record.source_dataset] += 1
+                if record.used_manifest_shape:
+                    manifest_shape_counts[record.source_dataset] += 1
+                    samples = manifest_shape_samples[record.source_dataset]
+                    if len(samples) < DEFAULT_ROUTERSET_REPORT_RAW_SAMPLES_PER_EXPERT:
+                        sample: dict[str, Any] = {
+                            "row_token": record.row_token,
+                            "source_sample_id": record.base_source_sample_id,
+                            "image_path": str(record.image_path),
+                            "normalization_mode": record.normalization_mode,
+                            "used_compatibility_path": bool(record.used_compatibility_path),
+                        }
+                        try:
+                            sample.update(sample_routerset_raw_array(record.image_path))
+                        except BaseException as error:
+                            sample["error_type"] = type(error).__name__
+                            sample["error"] = str(error)
+                        samples.append(sample)
             if record.record_status == "positive" and raw_key not in seen_positive_rows:
                 seen_positive_rows.add(raw_key)
                 raw_positive_counts[record.source_dataset] += 1
+            if record.source_had_non_finite:
+                sanitized_tensor_counts[record.source_dataset] += 1
+                non_finite_value_counts[record.source_dataset] += record.source_non_finite_count
+                if raw_key not in seen_non_finite_rows:
+                    seen_non_finite_rows.add(raw_key)
+                    non_finite_source_counts[record.source_dataset] += 1
         return {
             "split": self.split,
             "manifest_path": str(self.manifest_path),
@@ -923,6 +1936,18 @@ class RoutersetMoEDataset(Dataset):
             "expanded_positive_counts_by_expert": positive_counts,
             "raw_positive_counts_by_expert": raw_positive_counts,
             "generated_tiles_by_expert": tiled_counts,
+            "non_finite_source_records_by_expert": non_finite_source_counts,
+            "sanitized_training_tensors_by_expert": sanitized_tensor_counts,
+            "non_finite_values_by_expert": non_finite_value_counts,
+            "compatibility_path_source_records_by_expert": compatibility_path_counts,
+            "manifest_shape_source_records_by_expert": manifest_shape_counts,
+            "manifest_shape_raw_samples_by_expert": manifest_shape_samples,
+            "normalization_modes_by_expert": normalization_modes,
+            "num_non_finite_source_records": int(sum(non_finite_source_counts.values())),
+            "num_sanitized_training_tensors": int(sum(sanitized_tensor_counts.values())),
+            "num_non_finite_values": int(sum(non_finite_value_counts.values())),
+            "num_compatibility_path_source_records": int(sum(compatibility_path_counts.values())),
+            "num_manifest_shape_source_records": int(sum(manifest_shape_counts.values())),
             "record_status_counts": statuses,
             "target_size": self.target_size,
             "target_channels": self.target_channels,
@@ -1261,7 +2286,7 @@ def build_routerset_moe(
 ) -> MoEStudent:
     _ = routerset_dir
     experts = list(expert_names or DEFAULT_ROUTERSET_EXPERTS)
-    return load_student_moe(
+    return _loading_module().load_student_moe(
         expert_tasks=experts,
         training=training,
         n_shots=n_shots,
@@ -1280,13 +2305,14 @@ def collect_routerset_dataset_report(
     target_size: int = DEFAULT_ROUTERSET_TARGET_SIZE,
     target_channels: int = 8,
     balanced_sampling: bool = True,
+    num_workers: int = 0,
 ) -> dict[str, Any]:
     datamodule = RoutersetMoEDataModule(
         routerset_dir,
         manifest_path=manifest_path,
         expert_names=expert_names,
         batch_size=1,
-        num_workers=0,
+        num_workers=num_workers,
         target_size=target_size,
         target_channels=target_channels,
         balanced_sampling=balanced_sampling,
@@ -1353,6 +2379,40 @@ def validate_routerset_dataset_report(
         )
 
 
+def validate_materialized_routerset_export_report(
+    dataset_report: Mapping[str, Any],
+    *,
+    expert_names: Sequence[str],
+    target_size: int,
+    target_channels: int,
+) -> None:
+    expected_shape = f"{target_channels}x{target_size}x{target_size}"
+    invalid_shapes: Dict[str, Dict[str, Mapping[str, int]]] = {}
+    total_counts: Dict[str, int] = {expert_name: 0 for expert_name in expert_names}
+
+    for split_name in ("train", "validation"):
+        split_report = dataset_report[split_name]
+        counts = split_report["raw_counts_by_expert"]
+        for expert_name in expert_names:
+            total_counts[expert_name] += int(counts.get(expert_name, 0))
+        for expert_name, shapes in split_report["training_shapes_by_expert"].items():
+            if list(shapes.keys()) != [expected_shape]:
+                invalid_shapes.setdefault(split_name, {})[expert_name] = shapes
+
+    missing_experts = [expert_name for expert_name, count in total_counts.items() if count <= 0]
+    if missing_experts:
+        raise ValueError(
+            "Materialized routerset export is missing selected experts: "
+            f"{', '.join(sorted(missing_experts))}."
+        )
+
+    if invalid_shapes:
+        raise ValueError(
+            "Materialized routerset export produced non-canonical tensor shapes: "
+            f"{json.dumps(invalid_shapes, sort_keys=True)}"
+        )
+
+
 def validate_student_checkpoint_report(
     checkpoint_report: Mapping[str, Mapping[str, Any]],
     *,
@@ -1392,16 +2452,24 @@ def preflight_routerset_training(
     target_size: int = DEFAULT_ROUTERSET_TARGET_SIZE,
     target_channels: int = 8,
     output_dir: Optional[Union[str, Path]] = None,
+    runtime_root: Optional[Union[str, Path]] = None,
     release_name: Optional[str] = None,
     rebuild_splits: bool = False,
     rebuilt_manifest_out: Optional[Union[str, Path]] = None,
     balanced_sampling: bool = True,
+    dataset_num_workers: int = 0,
+    inference_batch_size: int = 64,
+    inference_device: Optional[str] = None,
+    inference_use_amp: bool = True,
+    skip_existing_routing_targets: bool = False,
 ) -> dict[str, Any]:
     experts = list(expert_names or DEFAULT_ROUTERSET_EXPERTS)
     active_manifest_path = resolve_routerset_manifest_path(routerset_dir, manifest_path)
     rebuilt_manifest_path = None
+    materialization_base = Path(runtime_root) if runtime_root is not None else (Path(output_dir) if output_dir is not None else None)
     dataset_report_path = Path(output_dir) / "dataset_report.json" if output_dir is not None else None
     checkpoint_report_path = Path(output_dir) / "checkpoint_report.json" if output_dir is not None else None
+    routing_target_report_path = Path(output_dir) / "routing_target_report.json" if output_dir is not None else None
     if rebuild_splits:
         rebuilt_manifest_path = rebuild_routerset_split_manifest(
             routerset_dir,
@@ -1410,6 +2478,40 @@ def preflight_routerset_training(
             output_path=rebuilt_manifest_out,
         )
         active_manifest_path = rebuilt_manifest_path
+    if materialization_base is not None:
+        active_manifest_path = materialize_routerset_training_manifest(
+            routerset_dir=routerset_dir,
+            manifest_path=active_manifest_path,
+            materialization_root=materialization_base,
+            expert_names=experts,
+            target_size=target_size,
+            target_channels=target_channels,
+        )
+    checkpoint_report = resolve_student_checkpoint_report(
+        experts,
+        training=training,
+        n_shots=n_shots,
+        weights_dir=weights_dir,
+    )
+    if checkpoint_report_path is not None:
+        save_json(checkpoint_report_path, checkpoint_report)
+    validate_student_checkpoint_report(checkpoint_report, expert_names=experts)
+    active_manifest_path = generate_routerset_routing_targets(
+        routerset_dir=routerset_dir,
+        manifest_path=active_manifest_path,
+        output_path=active_manifest_path,
+        expert_names=experts,
+        training=training,
+        n_shots=n_shots,
+        weights_dir=weights_dir,
+        target_size=target_size,
+        target_channels=target_channels,
+        report_path=routing_target_report_path,
+        force=not skip_existing_routing_targets,
+        inference_batch_size=inference_batch_size,
+        inference_device=inference_device,
+        inference_use_amp=inference_use_amp,
+    )
     dataset_report = collect_routerset_dataset_report(
         routerset_dir,
         manifest_path=active_manifest_path,
@@ -1417,6 +2519,7 @@ def preflight_routerset_training(
         target_size=target_size,
         target_channels=target_channels,
         balanced_sampling=balanced_sampling,
+        num_workers=dataset_num_workers,
     )
     validate_routerset_dataset_report(
         dataset_report,
@@ -1432,14 +2535,12 @@ def preflight_routerset_training(
     )
     if dataset_report_path is not None:
         save_json(dataset_report_path, dataset_report)
-    if checkpoint_report_path is not None:
-        save_json(checkpoint_report_path, checkpoint_report)
-    validate_student_checkpoint_report(checkpoint_report, expert_names=experts)
     payload = {
         "release_name": resolve_release_name(release_name),
         "routerset_dir": str(routerset_dir),
         "manifest_path": str(active_manifest_path),
         "rebuilt_manifest_path": str(rebuilt_manifest_path) if rebuilt_manifest_path is not None else None,
+        "materialized_manifest_path": str(active_manifest_path) if materialization_base is not None else None,
         "experts": experts,
         "training": training,
         "n_shots": int(n_shots),
@@ -1448,6 +2549,7 @@ def preflight_routerset_training(
         "balanced_sampling": bool(balanced_sampling),
         "dataset_report": dataset_report,
         "checkpoint_report": checkpoint_report,
+        "routing_target_report_path": str(routing_target_report_path) if routing_target_report_path is not None else "",
     }
     if output_dir is not None:
         save_json(Path(output_dir) / "preflight_report.json", payload)
@@ -1472,6 +2574,11 @@ def prepare_routerset_training(
     balanced_sampling: bool = True,
     run_startup_gate: bool = True,
     startup_timeout_seconds: int = DEFAULT_STARTUP_TIMEOUT_SECONDS,
+    dataset_num_workers: int = 0,
+    inference_batch_size: int = 64,
+    inference_device: Optional[str] = None,
+    inference_use_amp: bool = True,
+    skip_existing_routing_targets: bool = False,
 ) -> dict[str, Any]:
     output_dir = ensure_dir(output_dir)
     runtime_report = configure_local_runtime_environment(
@@ -1491,10 +2598,16 @@ def prepare_routerset_training(
         target_size=target_size,
         target_channels=target_channels,
         output_dir=output_dir,
+        runtime_root=runtime_report["runtime_root"],
         release_name=release_name,
         rebuild_splits=rebuild_splits,
         rebuilt_manifest_out=rebuilt_manifest_out,
         balanced_sampling=balanced_sampling,
+        dataset_num_workers=dataset_num_workers,
+        inference_batch_size=inference_batch_size,
+        inference_device=inference_device,
+        inference_use_amp=inference_use_amp,
+        skip_existing_routing_targets=skip_existing_routing_targets,
     )
     startup_gate = run_training_startup_gate(
         routerset_dir=routerset_dir,
@@ -1604,7 +2717,7 @@ This directory contains the final `phidranet` student MoE release package.
 - `config.json`: canonical training configuration
 - `metrics.json`: final logged metrics from training
 - `routing_predictions.jsonl`: validation routing report
-- `dataset_report.json`: train/validation dataset summary after routerset adaptation
+- `dataset_report.json`: train/validation dataset summary after routerset adaptation, including normalization-mode, compatibility-path, and sampled raw-shape/value-range diagnostics
 - `release_manifest.json`: self-contained release metadata
 
 ## Load
@@ -1698,7 +2811,7 @@ def run_exported_moe_inference(
     balanced_sampling: bool = True,
 ) -> dict[str, str]:
     inference_dir = ensure_dir(output_dir)
-    model = load_student_moe_bundle(bundle_path)
+    model = _loading_module().load_student_moe_bundle(bundle_path)
     datamodule = RoutersetMoEDataModule(
         routerset_dir,
         manifest_path=manifest_path,
@@ -1759,6 +2872,12 @@ def train_switcher(
     accelerator: str = "cpu",
     devices: Union[str, int, Sequence[int]] = 1,
     precision: Optional[str] = None,
+    dataset_num_workers: int = 0,
+    inference_batch_size: int = 64,
+    inference_device: Optional[str] = None,
+    inference_use_amp: bool = True,
+    skip_existing_routing_targets: bool = False,
+    skip_dataset_report: bool = False,
     run_startup_gate: bool = True,
     startup_timeout_seconds: int = DEFAULT_STARTUP_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
@@ -1785,6 +2904,7 @@ def train_switcher(
     config_path = Path(output_dir) / "config.json"
     dataset_report_path = Path(output_dir) / "dataset_report.json"
     checkpoint_report_path = Path(output_dir) / "checkpoint_report.json"
+    routing_target_report_path = Path(output_dir) / "routing_target_report.json"
     preflight_report_path = Path(output_dir) / "preflight_report.json"
     metrics_path = Path(output_dir) / "metrics.json"
     summary_path = Path(output_dir) / "summary.json"
@@ -1798,6 +2918,9 @@ def train_switcher(
     config: Optional[dict[str, Any]] = None
 
     try:
+        if str(accelerator).lower() in {"gpu", "cuda", "auto"} and torch.cuda.is_available():
+            torch.set_float32_matmul_precision("high")
+            recorder.mark("matmul_precision_set", precision="high")
         recorder.mark(
             "manifest_resolved",
             routerset_dir=str(routerset_dir),
@@ -1813,6 +2936,46 @@ def train_switcher(
             )
             manifest_path_value = str(active_manifest_path)
             recorder.mark("split_rebuilt", manifest_path=manifest_path_value)
+
+        active_manifest_path = materialize_routerset_training_manifest(
+            routerset_dir=routerset_dir,
+            manifest_path=active_manifest_path,
+            materialization_root=runtime_report["runtime_root"],
+            expert_names=expert_names,
+            target_size=target_size,
+            target_channels=target_channels,
+        )
+        manifest_path_value = str(active_manifest_path)
+        recorder.mark("materialized_manifest_written", manifest_path=manifest_path_value)
+
+        checkpoint_report = resolve_student_checkpoint_report(
+            expert_names,
+            training=training,
+            n_shots=n_shots,
+            weights_dir=runtime_report["weights_dir"],
+        )
+        save_json(checkpoint_report_path, checkpoint_report)
+        recorder.mark("checkpoint_report_written", checkpoint_report_path=str(checkpoint_report_path))
+        validate_student_checkpoint_report(checkpoint_report, expert_names=expert_names)
+
+        active_manifest_path = generate_routerset_routing_targets(
+            routerset_dir=routerset_dir,
+            manifest_path=active_manifest_path,
+            output_path=active_manifest_path,
+            expert_names=expert_names,
+            training=training,
+            n_shots=n_shots,
+            weights_dir=runtime_report["weights_dir"],
+            target_size=target_size,
+            target_channels=target_channels,
+            report_path=routing_target_report_path,
+            force=not skip_existing_routing_targets,
+            inference_batch_size=inference_batch_size,
+            inference_device=inference_device,
+            inference_use_amp=inference_use_amp,
+        )
+        manifest_path_value = str(active_manifest_path)
+        recorder.mark("routing_targets_generated", manifest_path=manifest_path_value)
 
         config = create_moe_run_config(
             routerset_dir=routerset_dir,
@@ -1836,22 +2999,36 @@ def train_switcher(
         save_json(config_path, config)
         recorder.mark("config_written", config_path=str(config_path))
 
-        dataset_report = collect_routerset_dataset_report(
-            routerset_dir,
-            manifest_path=active_manifest_path,
-            expert_names=expert_names,
-            target_size=target_size,
-            target_channels=target_channels,
-            balanced_sampling=balanced_sampling,
-        )
-        validate_routerset_dataset_report(
-            dataset_report,
-            expert_names=expert_names,
-            target_size=target_size,
-            target_channels=target_channels,
-        )
-        save_json(dataset_report_path, dataset_report)
-        recorder.mark("dataset_report_written", dataset_report_path=str(dataset_report_path))
+        if skip_dataset_report:
+            dataset_report = {
+                "status": "skipped",
+                "reason": "dataset report skipped by caller",
+                "manifest_path": manifest_path_value,
+                "expert_names": list(expert_names),
+                "target_size": int(target_size),
+                "target_channels": int(target_channels),
+                "balanced_sampling": bool(balanced_sampling),
+            }
+            save_json(dataset_report_path, dataset_report)
+            recorder.mark("dataset_report_skipped", dataset_report_path=str(dataset_report_path))
+        else:
+            dataset_report = collect_routerset_dataset_report(
+                routerset_dir,
+                manifest_path=active_manifest_path,
+                expert_names=expert_names,
+                target_size=target_size,
+                target_channels=target_channels,
+                balanced_sampling=balanced_sampling,
+                num_workers=dataset_num_workers,
+            )
+            validate_routerset_dataset_report(
+                dataset_report,
+                expert_names=expert_names,
+                target_size=target_size,
+                target_channels=target_channels,
+            )
+            save_json(dataset_report_path, dataset_report)
+            recorder.mark("dataset_report_written", dataset_report_path=str(dataset_report_path))
 
         if run_startup_gate:
             recorder.mark("startup_gate_started", timeout_seconds=int(startup_timeout_seconds))
@@ -1891,15 +3068,6 @@ def train_switcher(
             )
             recorder.mark("startup_gate_skipped")
 
-        checkpoint_report = resolve_student_checkpoint_report(
-            expert_names,
-            training=training,
-            n_shots=n_shots,
-            weights_dir=runtime_report["weights_dir"],
-        )
-        save_json(checkpoint_report_path, checkpoint_report)
-        recorder.mark("checkpoint_report_written", checkpoint_report_path=str(checkpoint_report_path))
-        validate_student_checkpoint_report(checkpoint_report, expert_names=expert_names)
         save_json(
             preflight_report_path,
             {
@@ -1915,6 +3083,7 @@ def train_switcher(
                 "balanced_sampling": bool(balanced_sampling),
                 "dataset_report": dataset_report,
                 "checkpoint_report": checkpoint_report,
+                "routing_target_report_path": str(routing_target_report_path),
             },
         )
         recorder.mark("preflight_report_written", preflight_report_path=str(preflight_report_path))
@@ -1981,7 +3150,11 @@ def train_switcher(
         metrics = {key: float(value) for key, value in trainer.callback_metrics.items()}
         save_json(metrics_path, metrics)
 
-        bundle_path = save_student_moe_bundle(model, Path(output_dir) / "student_moe_bundle.pt", metadata=config)
+        bundle_path = _loading_module().save_student_moe_bundle(
+            model,
+            Path(output_dir) / "student_moe_bundle.pt",
+            metadata=config,
+        )
         prediction_path = write_routing_predictions(
             model,
             datamodule.val_dataloader(),
