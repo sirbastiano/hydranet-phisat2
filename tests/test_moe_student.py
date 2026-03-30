@@ -8,11 +8,37 @@ from unittest.mock import patch
 import torch
 
 from hydranet import PhiSatNetDownstream, load_student_moe_bundle, save_student_moe_bundle
+from hydranet.loading import _load_student_catalog_rows, _resolve_default_moe_experts
 from hydranet.models.moe_student import build_moe_student_from_models
 from hydranet.models.student import create_phisatnet
 
 
 class TestMoEStudent(unittest.TestCase):
+    def test_float_student_catalog_only_keeps_strong_checkpoints(self) -> None:
+        rows = _load_student_catalog_rows()
+        expected = {
+            "anomaly_detection": ("finetuning", "5000.0", "20260108"),
+            "burned_area": ("finetuning", "5000.0", "20251216"),
+            "fire": ("finetuning", "5000.0", "20251217"),
+            "worldfloods": ("finetuning", "5000.0", "20251212"),
+        }
+
+        for task, keep in expected.items():
+            task_rows = [row for row in rows if row["task"] == task]
+            self.assertEqual(len(task_rows), 1)
+            self.assertEqual(
+                (task_rows[0]["training"], task_rows[0]["n_shots"], task_rows[0]["datetime"]),
+                keep,
+            )
+
+    def test_default_routerset_experts_still_resolve_from_catalog(self) -> None:
+        tasks = _resolve_default_moe_experts(
+            allowed_tasks=("anomaly_detection", "burned_area", "fire", "lc", "worldfloods"),
+            training="finetuning",
+            n_shots=5000,
+        )
+        self.assertEqual(tasks, ["anomaly_detection", "burned_area", "fire", "lc", "worldfloods"])
+
     def test_architecture_mismatch_raises(self) -> None:
         models = {
             "fire": create_phisatnet("checkpoint", n_classes=1),
