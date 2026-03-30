@@ -36,6 +36,9 @@ DEFAULT_ROUTERSET_DATASET_SUBDIR = "multilabel_dataset"
 DEFAULT_ROUTERSET_MANIFEST = "multilabel_dataset/manifest.jsonl"
 ROUTERSET_SWAPPED_TILE_DATASETS = frozenset({"burned_area", "worldfloods"})
 ROUTERSET_PHI2FM_RAW_S2_DATASETS = frozenset({"lc", "roads"})
+ROUTERSET_PHI2FM_FLOAT_MINMAX_DATASETS = frozenset(
+    {"anomaly_detection", "burned_area", "fire", "worldfloods"}
+)
 ROUTERSET_PHI2FM_STUDENT_SCALE = 10000.0
 DEFAULT_ROUTERSET_REPORT_RAW_SAMPLES_PER_EXPERT = 2
 DEFAULT_ROUTERSET_FAULT_EXAMPLES_PER_CODE = 5
@@ -661,6 +664,26 @@ def _normalize_routerset_channel_count(current: np.ndarray, *, target_channels: 
     return current
 
 
+def _minmax_normalize_routerset_channels(current: np.ndarray) -> np.ndarray:
+    normalized = np.array(current, dtype=np.float32, copy=True)
+    for channel_index in range(normalized.shape[0]):
+        channel = np.nan_to_num(
+            normalized[channel_index],
+            nan=0.0,
+            posinf=0.0,
+            neginf=0.0,
+            copy=False,
+        )
+        min_value = float(np.min(channel)) if channel.size > 0 else 0.0
+        max_value = float(np.max(channel)) if channel.size > 0 else 0.0
+        denom = max_value - min_value
+        if denom > 1e-12:
+            normalized[channel_index] = (channel - min_value) / denom
+        else:
+            normalized[channel_index] = np.zeros_like(channel, dtype=np.float32)
+    return normalized
+
+
 def _map_phi2fm_s2_to_student_channels(current: np.ndarray) -> np.ndarray:
     """
     Map PhilEO-Bench Sentinel-2 channels into the 8-channel student layout used by
@@ -714,6 +737,9 @@ def _normalize_routerset_array_impl(
         current = current.astype(np.float32, copy=False)
     else:
         current = _normalize_routerset_channel_count(current, target_channels=target_channels)
+        if source_dataset in ROUTERSET_PHI2FM_FLOAT_MINMAX_DATASETS:
+            current = _minmax_normalize_routerset_channels(current)
+            normalization_mode = "phi2fm_student_float_minmax"
 
     return current, diagnostics, normalization_mode, original_dtype
 
@@ -723,6 +749,8 @@ def infer_routerset_normalization_mode(*, source_dataset: str, target_channels: 
         if target_channels == 8:
             return "phi2fm_student_s2_layout_scaled"
         return "phi2fm_student_channel_adapter_scaled"
+    if source_dataset in ROUTERSET_PHI2FM_FLOAT_MINMAX_DATASETS:
+        return "phi2fm_student_float_minmax"
     return "channel_adapter"
 
 
@@ -1284,6 +1312,28 @@ def _tile_routerset_array(
     return tiles
 
 
+def _materialize_routerset_anomaly_tiles(
+    array: np.ndarray,
+    *,
+    source_dataset: str,
+    target_size: int,
+    target_channels: int,
+) -> List[tuple[np.ndarray, tuple[int, int]]]:
+    channel_first = _normalize_to_channel_first(np.asarray(array))
+    _, height, width = channel_first.shape
+    tile_payloads: List[tuple[np.ndarray, tuple[int, int]]] = []
+    for tile_y, tile_x in anomaly_tile_origins(height, width, target_size):
+        raw_tile = channel_first[:, tile_y : tile_y + target_size, tile_x : tile_x + target_size]
+        tile = build_routerset_training_tensor(
+            raw_tile,
+            source_dataset=source_dataset,
+            target_size=target_size,
+            target_channels=target_channels,
+        ).numpy()
+        tile_payloads.append((tile, (tile_y, tile_x)))
+    return tile_payloads
+
+
 def _write_materialized_routerset_sample(
     *,
     dataset_root: Union[str, Path],
@@ -1393,6 +1443,7 @@ def _materialize_routerset_manifest_to_dataset_root(
     materialize_all: bool,
     strict_missing: bool,
     clean_export: bool = False,
+    selected_only: bool = False,
 ) -> tuple[Path, dict[str, Any]]:
     active_manifest_path = Path(manifest_path)
     rows = load_routerset_manifest_rows(routerset_dir, active_manifest_path)
@@ -1410,11 +1461,14 @@ def _materialize_routerset_manifest_to_dataset_root(
         "reused_file_count": 0,
         "missing_source_rows": 0,
         "passthrough_rows": 0,
+        "skipped_unselected_rows": 0,
+        "skipped_unselected_rows_by_expert": {},
         "metadata_only_rows": 0,
         "single_file_source_rows": 0,
         "tiled_source_rows": 0,
         "materialize_all": bool(materialize_all),
         "clean_export": bool(clean_export),
+        "selected_only": bool(selected_only),
         "fault_row_count": 0,
         "fault_rows_by_code": {},
         "fault_rows_by_expert": {},
@@ -1429,6 +1483,12 @@ def _materialize_routerset_manifest_to_dataset_root(
         summary["source_row_count"] += 1
         summary["source_rows_by_expert"][source_dataset] = int(summary["source_rows_by_expert"].get(source_dataset, 0)) + 1
         if source_dataset not in expert_set:
+            if selected_only:
+                summary["skipped_unselected_rows"] += 1
+                summary["skipped_unselected_rows_by_expert"][source_dataset] = int(
+                    summary["skipped_unselected_rows_by_expert"].get(source_dataset, 0)
+                ) + 1
+                continue
             rewritten_rows.append(dict(row))
             summary["passthrough_rows"] += 1
             continue
@@ -1474,43 +1534,64 @@ def _materialize_routerset_manifest_to_dataset_root(
             continue
 
         array = np.load(source_image_path, mmap_mode="r")
-        if materialize_all and source_dataset != "anomaly_detection":
-            prepared = build_routerset_training_tensor(
-                array,
-                source_dataset=source_dataset,
-                target_size=target_size,
-                target_channels=target_channels,
-            ).numpy()
-            _, height, width = prepared.shape
-        else:
-            prepared = normalize_routerset_array(
-                array,
-                source_dataset=source_dataset,
-                target_channels=target_channels,
-            ).numpy()
-            _, height, width = prepared.shape
         base_patch_x = int(row.get("patch_x") or 0)
         base_patch_y = int(row.get("patch_y") or 0)
 
-        if not materialize_all:
-            needs_materialization = (
-                height != target_size
-                or width != target_size
-                or patch_width != target_size
-                or patch_height != target_size
-            )
-            if not needs_materialization:
-                rewritten_rows.append(dict(row))
-                summary["passthrough_rows"] += 1
-                continue
-
         if source_dataset == "anomaly_detection":
+            channel_first = _normalize_to_channel_first(np.asarray(array))
+            _, height, width = channel_first.shape
+
+            if not materialize_all:
+                needs_materialization = (
+                    height != target_size
+                    or width != target_size
+                    or patch_width != target_size
+                    or patch_height != target_size
+                )
+                if not needs_materialization:
+                    rewritten_rows.append(dict(row))
+                    summary["passthrough_rows"] += 1
+                    continue
+
             tile_payloads = [
                 (tile_array, base_patch_x + int(tile_x), base_patch_y + int(tile_y), "tile")
-                for tile_array, (tile_y, tile_x) in _tile_routerset_array(prepared, target_size=target_size)
+                for tile_array, (tile_y, tile_x) in _materialize_routerset_anomaly_tiles(
+                    array,
+                    source_dataset=source_dataset,
+                    target_size=target_size,
+                    target_channels=target_channels,
+                )
             ]
             summary["tiled_source_rows"] += 1
         else:
+            if materialize_all:
+                prepared = build_routerset_training_tensor(
+                    array,
+                    source_dataset=source_dataset,
+                    target_size=target_size,
+                    target_channels=target_channels,
+                ).numpy()
+                _, height, width = prepared.shape
+            else:
+                prepared = normalize_routerset_array(
+                    array,
+                    source_dataset=source_dataset,
+                    target_channels=target_channels,
+                ).numpy()
+                _, height, width = prepared.shape
+
+            if not materialize_all:
+                needs_materialization = (
+                    height != target_size
+                    or width != target_size
+                    or patch_width != target_size
+                    or patch_height != target_size
+                )
+                if not needs_materialization:
+                    rewritten_rows.append(dict(row))
+                    summary["passthrough_rows"] += 1
+                    continue
+
             cropped = prepared if materialize_all else crop_or_pad_routerset_tensor(torch.from_numpy(prepared), target_size=target_size).numpy()
             tile_payloads = [(cropped, base_patch_x, base_patch_y, "materialized")]
             summary["single_file_source_rows"] += 1
@@ -1594,6 +1675,7 @@ def materialize_routerset_training_manifest(
         target_channels=target_channels,
         materialize_all=False,
         strict_missing=False,
+        selected_only=False,
     )
     return materialized_manifest_path
 
@@ -1607,6 +1689,7 @@ def materialize_routerset_dataset(
     target_size: int = DEFAULT_ROUTERSET_TARGET_SIZE,
     target_channels: int = 8,
     clean_export: bool = False,
+    selected_only: bool = False,
 ) -> dict[str, Any]:
     experts = list(expert_names or DEFAULT_ROUTERSET_EXPERTS)
     dataset_root = _materialized_routerset_dataset_root(output_dir)
@@ -1621,6 +1704,7 @@ def materialize_routerset_dataset(
         materialize_all=True,
         strict_missing=True,
         clean_export=clean_export,
+        selected_only=selected_only,
     )
     dataset_report = collect_routerset_dataset_report(
         routerset_dir,
@@ -1641,6 +1725,7 @@ def materialize_routerset_dataset(
     training_blockers = _collect_routerset_training_blockers(dataset_report, expert_names=experts)
     fault_report = {
         "export_mode": "clean" if clean_export else "canonical",
+        "selected_only": bool(selected_only),
         "phi2fm_reference": {
             "repository": "https://github.com/carlos-collado/phi2FM",
             "training_alignment": "roads_and_lc_follow_generic_downstream_student_reflectance_scaling",
@@ -1683,6 +1768,7 @@ def materialize_routerset_dataset(
         "target_size": int(target_size),
         "target_channels": int(target_channels),
         "export_mode": "clean" if clean_export else "canonical",
+        "selected_only": bool(selected_only),
         "materialized_unique_file_count": int(len(materialized_paths)),
         "materialized_total_bytes": int(materialized_total_bytes),
         "corrections_applied": [

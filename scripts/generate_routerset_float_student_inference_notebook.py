@@ -49,7 +49,7 @@ sys.path.insert(0, str(PROJECT_ROOT / 'src'))
 from hydranet import load_student
 from hydranet.moe_training import crop_or_pad_routerset_tensor, _reduce_expert_output_to_routing_score
 
-DATASET_ROOT = PROJECT_ROOT / 'outputs' / 'routerset' / 'fix30March_floatminmax_selected'
+DATASET_ROOT = PROJECT_ROOT / 'outputs' / 'routerset' / 'fix30March_floatminmax_selected_anomalyfix'
 MANIFEST_PATH = DATASET_ROOT / 'manifest_256.jsonl'
 FAULT_REPORT_PATH = DATASET_ROOT / 'fault_report.json'
 

@@ -523,6 +523,85 @@ class TestMoETraining(unittest.TestCase):
                 summary["fault_report"]["training_blockers"],
             )
 
+    def test_materialize_routerset_dataset_selected_only_drops_unselected_experts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            export_root = root / "materialized_float_only"
+
+            summary = materialize_routerset_dataset(
+                routerset_dir=root,
+                output_dir=export_root,
+                expert_names=["burned_area", "fire"],
+                target_size=16,
+                target_channels=8,
+                clean_export=True,
+                selected_only=True,
+            )
+
+            manifest_path = export_root / "manifest_16.jsonl"
+            rows = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            self.assertTrue(rows)
+            self.assertEqual({row["source_dataset"] for row in rows}, {"burned_area", "fire"})
+            self.assertTrue(all("materialized_image_path" in row for row in rows))
+            self.assertTrue(summary["selected_only"])
+            self.assertEqual(summary["materialization_summary"]["skipped_unselected_rows_by_expert"], {"anomaly_detection": 2, "lc": 2, "roads": 2, "worldfloods": 2})
+
+    def test_materialize_routerset_dataset_normalizes_anomaly_per_tile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            _write_routerset_fixture(root)
+            export_root = root / "materialized_16"
+
+            anomaly_row = {
+                "source_dataset": "anomaly_detection",
+                "source_split": "train",
+                "source_sample_id": "0000002",
+                "patch_x": 0,
+                "patch_y": 0,
+                "patch_width": None,
+                "patch_height": None,
+            }
+            anomaly_path = routerset_image_path(root, anomaly_row)
+            anomaly = np.zeros((8, 32, 32), dtype=np.float32)
+            quadrants = [
+                (slice(0, 16), slice(0, 16), 0.0),
+                (slice(0, 16), slice(16, 32), 10.0),
+                (slice(16, 32), slice(0, 16), 20.0),
+                (slice(16, 32), slice(16, 32), 30.0),
+            ]
+            ramp = np.linspace(0.0, 1.0, num=16 * 16, dtype=np.float32).reshape(16, 16)
+            for channel in range(8):
+                for y_slice, x_slice, offset in quadrants:
+                    anomaly[channel, y_slice, x_slice] = ramp + offset
+            np.save(anomaly_path, anomaly)
+
+            summary = materialize_routerset_dataset(
+                routerset_dir=root,
+                output_dir=export_root,
+                expert_names=list(DEFAULT_ROUTERSET_EXPERTS),
+                target_size=16,
+                target_channels=8,
+            )
+
+            manifest_path = export_root / "manifest_16.jsonl"
+            rows = [json.loads(line) for line in manifest_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            anomaly_tiles = [
+                row
+                for row in rows
+                if row["source_dataset"] == "anomaly_detection"
+                and row["source_sample_id"] == "0000002"
+                and row["source_split"] == "train"
+            ]
+            self.assertEqual(len(anomaly_tiles), 4)
+            self.assertEqual(summary["materialization_summary"]["tiled_source_rows"], 2)
+
+            for tile_row in anomaly_tiles:
+                tile = np.load(Path(tile_row["materialized_image_path"]))
+                self.assertEqual(tuple(tile.shape), (8, 16, 16))
+                self.assertAlmostEqual(float(tile.min()), 0.0, places=6)
+                self.assertAlmostEqual(float(tile.max()), 1.0, places=6)
+
     def test_normalize_routerset_array_adapts_all_source_layouts(self) -> None:
         fire = normalize_routerset_array(np.random.randn(8, 16, 16).astype(np.float32), source_dataset="fire")
         burned_area = normalize_routerset_array(np.random.randn(7, 16, 16).astype(np.float32), source_dataset="burned_area")
@@ -549,6 +628,17 @@ class TestMoETraining(unittest.TestCase):
         self.assertTrue(torch.allclose(normalized[6], torch.full((4, 4), 0.06)))
         self.assertTrue(torch.allclose(normalized[7], torch.full((4, 4), 0.07)))
 
+    def test_normalize_routerset_array_matches_phi2fm_student_float_minmax_contract(self) -> None:
+        channel = np.array([[2.0, 4.0], [6.0, 8.0]], dtype=np.float32)
+        array = np.stack([channel + float(index) for index in range(8)], axis=-1)
+
+        normalized = normalize_routerset_array(array, source_dataset="fire")
+
+        expected = torch.tensor([[0.0, 1.0 / 3.0], [2.0 / 3.0, 1.0]], dtype=torch.float32)
+        self.assertEqual(tuple(normalized.shape), (8, 2, 2))
+        self.assertTrue(torch.allclose(normalized[0], expected))
+        self.assertTrue(torch.allclose(normalized[7], expected))
+
     def test_normalize_routerset_array_copies_non_writable_input(self) -> None:
         array = np.arange(32, dtype=np.float32).reshape(8, 2, 2)
         array.setflags(write=False)
@@ -568,8 +658,15 @@ class TestMoETraining(unittest.TestCase):
             target_size=32,
             target_channels=8,
         )
+        burned_source = np.stack(
+            [
+                np.arange(16 * 16, dtype=np.float32).reshape(16, 16) + float(index)
+                for index in range(7)
+            ],
+            axis=0,
+        )
         burned_area = build_routerset_training_tensor(
-            np.full((7, 16, 16), 1.0, dtype=np.float32),
+            burned_source,
             source_dataset="burned_area",
             target_size=32,
             target_channels=8,
@@ -581,7 +678,9 @@ class TestMoETraining(unittest.TestCase):
         self.assertTrue(torch.allclose(roads[3, :16, :16], torch.zeros((16, 16))))
         self.assertEqual(float(roads[:, 16:, :].sum().item()), 0.0)
         self.assertEqual(float(roads[:, :, 16:].sum().item()), 0.0)
-        self.assertTrue(torch.all(burned_area[:7, :16, :16] > 0))
+        self.assertEqual(float(burned_area[:7, :16, :16].min().item()), 0.0)
+        self.assertEqual(float(burned_area[:7, :16, :16].max().item()), 1.0)
+        self.assertEqual(float(burned_area[7, :16, :16].sum().item()), 0.0)
         self.assertEqual(float(burned_area[:, 16:, :].sum().item()), 0.0)
         self.assertEqual(float(burned_area[:, :, 16:].sum().item()), 0.0)
 
@@ -606,8 +705,8 @@ class TestMoETraining(unittest.TestCase):
 
         self.assertTrue(np.isfinite(normalized.numpy()).all())
         self.assertEqual(float(normalized.min()), 0.0)
-        self.assertEqual(float(normalized.max()), 5.0)
-        self.assertIn(1.0, normalized.numpy())
+        self.assertEqual(float(normalized.max()), 1.0)
+        self.assertIn(2.0 / 3.0, normalized.numpy())
 
     def test_dataset_supports_full_routerset_expert_set(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -683,7 +782,7 @@ class TestMoETraining(unittest.TestCase):
                 summary["manifest_shape_raw_samples_by_expert"]["burned_area"][0]["raw_max"],
             )
             self.assertTrue(summary["manifest_shape_raw_samples_by_expert"]["burned_area"][0]["used_compatibility_path"])
-            self.assertEqual(summary["normalization_modes_by_expert"]["burned_area"], {"channel_adapter": 1})
+            self.assertEqual(summary["normalization_modes_by_expert"]["burned_area"], {"phi2fm_student_float_minmax": 1})
 
     def test_generate_routerset_routing_targets_writes_multi_hot_targets_and_scores(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
