@@ -651,13 +651,21 @@ class TestMoETraining(unittest.TestCase):
         self.assertEqual(float(normalized[0, 0, 0]), 123.0)
         self.assertEqual(float(array[0, 0, 0]), 0.0)
 
-    def test_build_routerset_training_tensor_zero_pads_small_patches(self) -> None:
+    def test_build_routerset_training_tensor_keeps_top_left_padding_for_roads(self) -> None:
         roads = build_routerset_training_tensor(
             np.full((16, 16, 10), 1000, dtype=np.uint16),
             source_dataset="roads",
             target_size=32,
             target_channels=8,
         )
+
+        self.assertEqual(tuple(roads.shape), (8, 32, 32))
+        self.assertTrue(torch.allclose(roads[0, :16, :16], torch.full((16, 16), 0.1)))
+        self.assertTrue(torch.allclose(roads[3, :16, :16], torch.zeros((16, 16))))
+        self.assertEqual(float(roads[:, 16:, :].sum().item()), 0.0)
+        self.assertEqual(float(roads[:, :, 16:].sum().item()), 0.0)
+
+    def test_build_routerset_training_tensor_center_pads_burned_area_small_patches(self) -> None:
         burned_source = np.stack(
             [
                 np.arange(16 * 16, dtype=np.float32).reshape(16, 16) + float(index)
@@ -671,18 +679,18 @@ class TestMoETraining(unittest.TestCase):
             target_size=32,
             target_channels=8,
         )
-
-        self.assertEqual(tuple(roads.shape), (8, 32, 32))
         self.assertEqual(tuple(burned_area.shape), (8, 32, 32))
-        self.assertTrue(torch.allclose(roads[0, :16, :16], torch.full((16, 16), 0.1)))
-        self.assertTrue(torch.allclose(roads[3, :16, :16], torch.zeros((16, 16))))
-        self.assertEqual(float(roads[:, 16:, :].sum().item()), 0.0)
-        self.assertEqual(float(roads[:, :, 16:].sum().item()), 0.0)
-        self.assertEqual(float(burned_area[:7, :16, :16].min().item()), 0.0)
-        self.assertEqual(float(burned_area[:7, :16, :16].max().item()), 1.0)
-        self.assertEqual(float(burned_area[7, :16, :16].sum().item()), 0.0)
-        self.assertEqual(float(burned_area[:, 16:, :].sum().item()), 0.0)
-        self.assertEqual(float(burned_area[:, :, 16:].sum().item()), 0.0)
+        expected_center = torch.zeros((8, 32, 32), dtype=torch.float32)
+        expected_center[:, 8:24, 8:24] = normalize_routerset_array(
+            burned_source,
+            source_dataset="burned_area",
+            target_channels=8,
+        ).float()
+
+        self.assertTrue(torch.allclose(burned_area, expected_center))
+        self.assertEqual(float(burned_area[:, :8, :].sum().item()), 0.0)
+        self.assertEqual(float(burned_area[:, :, :8].sum().item()), 0.0)
+        self.assertGreater(float(burned_area[:, 8:24, 8:24].sum().item()), 0.0)
 
     def test_reduce_expert_output_to_routing_score_prefers_sparse_binary_activation(self) -> None:
         logits = torch.full((1, 1, 16, 16), -12.0)

@@ -949,7 +949,11 @@ def build_routerset_training_tensor(
         source_dataset=source_dataset,
         target_channels=target_channels,
     ).float()
-    return crop_or_pad_routerset_tensor(image, target_size=target_size)
+    return crop_or_pad_routerset_tensor(
+        image,
+        target_size=target_size,
+        center_small_tiles=(source_dataset == "burned_area"),
+    )
 
 
 def _load_student_expert_models(
@@ -1230,7 +1234,12 @@ def generate_routerset_routing_targets(
     return destination
 
 
-def crop_or_pad_routerset_tensor(image: torch.Tensor, *, target_size: int) -> torch.Tensor:
+def crop_or_pad_routerset_tensor(
+    image: torch.Tensor,
+    *,
+    target_size: int,
+    center_small_tiles: bool = False,
+) -> torch.Tensor:
     if image.ndim != 3:
         raise ValueError(f"Expected channel-first tensor, got shape {tuple(image.shape)}")
 
@@ -1249,7 +1258,9 @@ def crop_or_pad_routerset_tensor(image: torch.Tensor, *, target_size: int) -> to
             dtype=image.dtype,
             device=image.device,
         )
-        padded[:, :height, :width] = image
+        pad_top = (target_size - height) // 2 if center_small_tiles else 0
+        pad_left = (target_size - width) // 2 if center_small_tiles else 0
+        padded[:, pad_top : pad_top + height, pad_left : pad_left + width] = image
         image = padded
 
     return image
@@ -1592,7 +1603,15 @@ def _materialize_routerset_manifest_to_dataset_root(
                     summary["passthrough_rows"] += 1
                     continue
 
-            cropped = prepared if materialize_all else crop_or_pad_routerset_tensor(torch.from_numpy(prepared), target_size=target_size).numpy()
+            cropped = (
+                prepared
+                if materialize_all
+                else crop_or_pad_routerset_tensor(
+                    torch.from_numpy(prepared),
+                    target_size=target_size,
+                    center_small_tiles=(source_dataset == "burned_area"),
+                ).numpy()
+            )
             tile_payloads = [(cropped, base_patch_x, base_patch_y, "materialized")]
             summary["single_file_source_rows"] += 1
 
@@ -1775,7 +1794,7 @@ def materialize_routerset_dataset(
             "all_selected_rows_are_saved_as_concrete_npy_files",
             f"all_exported_tensors_are_channel_first_8x{int(target_size)}x{int(target_size)}",
             "roads_and_lc_follow_phi2fm_student_band_mapping_and_scaling",
-            "small_patches_are_zero_padded_after_normalization",
+            "undersized_burned_area_patches_are_center_padded_after_normalization",
             "oversized_anomaly_detection_arrays_are_tiled_deterministically",
             "swapped_coordinate_source_paths_are_resolved_and_rewritten_to_canonical_filenames",
         ],

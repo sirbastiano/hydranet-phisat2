@@ -135,7 +135,7 @@ make train-prepare MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 make smoketest-preflight MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 ```
 
-The canonical dataset root is `routerset/multilabel_dataset/`. The routerset training contract is fixed to `8x256x256`. Large `anomaly_detection` inputs are expanded into deterministic `256x256` tiles. Non-tiled tensors larger than `256` are cut out deterministically, and non-tiled tensors smaller than `256` are zero-padded after channel normalization. Raw `roads` and `lc` tiles now follow the original Phi2FM student preprocessing contract before padding: Sentinel-2 bands are mapped into the 8-channel student layout and scaled by `1/10000`. The preflight `dataset_report.json` now exposes per-expert normalization modes, compatibility-path source-record counts, and sampled true raw shapes and value-range stats for manifest-shaped rows so swapped-coordinate tile fallbacks and manifest-shape assumptions are visible.
+The canonical dataset root is `routerset/multilabel_dataset/`. The routerset training contract is fixed to `8x256x256`. Large `anomaly_detection` inputs are expanded into deterministic `256x256` tiles. Non-tiled tensors larger than `256` are cut out deterministically, and non-tiled tensors smaller than `256` are zero-padded after channel normalization. `burned_area` is the only undersized float-domain expert that now uses centered padding to avoid the asymmetric black slab caused by top-left anchoring. Raw `roads` and `lc` tiles follow the original Phi2FM student preprocessing contract before padding: Sentinel-2 bands are mapped into the 8-channel student layout and scaled by `1/10000`. The float-domain student experts `fire`, `worldfloods`, `burned_area`, and `anomaly_detection` now follow the local Phi2FM downstream contract before padding: channel adaptation first, then per-image channel-wise min-max normalization. The preflight `dataset_report.json` now exposes per-expert normalization modes, compatibility-path source-record counts, and sampled true raw shapes and value-range stats for manifest-shaped rows so swapped-coordinate tile fallbacks and manifest-shape assumptions are visible.
 
 For a concrete corrected dataset export, use:
 
@@ -162,6 +162,8 @@ make routerset-materialize-clean \
 ```
 
 The clean export writes `fault_rows_256.jsonl` and `fault_report.json` next to the manifest. It does not invent labels or silently repair split semantics, so unresolved blockers such as `fire` validation having zero positive rows remain reported in `fault_report.json`.
+
+When exporting only a subset of experts, add `--selected-only` to emit a self-contained manifest that drops unselected passthrough rows.
 
 For a full file-by-file audit over a materialized export, use:
 

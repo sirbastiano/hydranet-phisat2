@@ -80,7 +80,8 @@ The dataset graphs are stored in `multilabel_dataset/plots/`:
 
 - Arrays are stored as `.npy` materializations.
 - The dataset was built from the current local `phi2FM` downstream sources and then uploaded to this Hugging Face dataset repository.
-- A corrected canonical `8x256x256` export for local training and audit can be generated with `make routerset-materialize`, which writes to `outputs/routerset/materialized_256/` by default.
+- A corrected canonical `8x256x256` export for local training and audit can be generated with `make routerset-materialize`, which writes to `outputs/routerset/materialized_256/` by default. Raw `roads`/`lc` records are mapped to the student Sentinel-2 layout and scaled by `1/10000`; float-domain student experts (`fire`, `burned_area`, `worldfloods`, `anomaly_detection`) are channel-adapted and then min-max normalized per image before padding. `burned_area` uses centered padding for undersized tiles so the native `64x128` content is not anchored in the top-left corner.
+- Add `--selected-only` to `scripts/materialize_routerset_dataset.py` when exporting only a subset of experts and you need a self-contained manifest without passthrough rows from the other tasks.
 - A clean variant can be generated with `make routerset-materialize-clean`, which writes `manifest_256.jsonl`, `fault_rows_256.jsonl`, and `fault_report.json` under `outputs/routerset/materialized_256_clean/` by default.
 - A full tile-by-tile audit can be generated with `make routerset-audit MATERIALIZED_DATASET_DIR=outputs/routerset/fix27March`, which writes `audit/tile_audit.jsonl`, `audit/audit_summary.json`, and RGB / false-RGB plot previews under that dataset root.
 - The clean export only removes objective row-level artifact faults such as all-zero materialized tiles. Split-level problems, for example `fire` validation having no positive rows, stay reported as blockers instead of being rewritten silently.
