@@ -59,7 +59,7 @@ from hydranet.moe_training import (
     crop_or_pad_routerset_tensor,
 )
 
-DATASET_ROOT = PROJECT_ROOT / 'outputs' / 'routerset' / 'fix30March_floatminmax_selected_anomalyfix'
+DATASET_ROOT = PROJECT_ROOT / 'outputs' / 'routerset' / 'fix31March_floatminmax_centerpad_firefix_selected'
 MANIFEST_PATH = DATASET_ROOT / 'manifest_256.jsonl'
 REPORT_PATH = DATASET_ROOT / 'float_student_size_probe_summary.json'
 
