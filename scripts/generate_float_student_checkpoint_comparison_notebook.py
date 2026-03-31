@@ -8,29 +8,28 @@ from nbclient import NotebookClient
 from nbformat.v4 import new_code_cell, new_markdown_cell, new_notebook
 
 
-MARKDOWN_INTRO = """# Float Student Checkpoint Comparison
+MARKDOWN_INTRO = """# Historical Float Student Checkpoint Comparison
 
-This notebook compares the real student checkpoint variants available in the
-HydraNet catalog for the float-domain experts:
+This notebook records the pre-prune audit that justified removing weak
+float-domain student checkpoint variants from the default HydraNet catalog.
 
-- `anomaly_detection`
-- `burned_area`
-- `fire`
-- `worldfloods`
+Current catalog contract:
+
+- `anomaly_detection`, `burned_area`, `fire`, and `worldfloods` now keep only
+  the strong `finetuning` `5000-shot` student checkpoint
+- the `linear_probing` and lower-shot student variants shown below are
+  historical audit data, not part of the current default workflow
 
 Important scope:
 
 - this is **not** a comparison of different model families from the public
   Phi2FM repo
-- HydraNet currently loads one student architecture and multiple checkpoint
-  variants for it
-- the comparison here is across checkpoint variants:
-  - `finetuning` vs `linear_probing`
-  - `50-shot` vs `5000-shot`
+- HydraNet currently ships one strong default student checkpoint per float
+  expert; the comparisons below explain why the weaker variants were pruned
 
 The notebook uses the corrected float export at
-`outputs/routerset/fix30March_floatminmax_selected_anomalyfix/` and renders
-representative `train` and `validation` patches for each expert.
+`outputs/routerset/fix30March_floatminmax_selected_anomalyfix/` and preserves
+representative `train` and `validation` patches for the historical audit.
 """
 
 
@@ -54,6 +53,8 @@ sys.path.insert(0, str(PROJECT_ROOT / 'src'))
 
 from hydranet import load_student
 from hydranet.moe_training import _reduce_expert_output_to_routing_score
+
+# Historical audit notebook: current float-student defaults keep only FT-5000.
 
 DATASET_ROOT = PROJECT_ROOT / 'outputs' / 'routerset' / 'fix30March_floatminmax_selected_anomalyfix'
 MANIFEST_PATH = DATASET_ROOT / 'manifest_256.jsonl'
