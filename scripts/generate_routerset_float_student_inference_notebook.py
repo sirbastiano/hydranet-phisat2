@@ -39,7 +39,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from IPython import get_ipython
 from IPython.display import Markdown, display
+from matplotlib_inline.backend_inline import set_matplotlib_formats
 
 PROJECT_ROOT = Path.cwd()
 if not (PROJECT_ROOT / 'src').exists() and (PROJECT_ROOT.parent / 'src').exists():
@@ -59,6 +61,10 @@ TARGET_CHANNELS = 8
 DEVICE = 'cpu'
 
 torch.set_grad_enabled(False)
+ip = get_ipython()
+if ip is not None:
+    ip.run_line_magic('matplotlib', 'inline')
+set_matplotlib_formats('png')
 plt.rcParams['figure.figsize'] = (16, 8)
 plt.rcParams['figure.dpi'] = 120
 plt.rcParams['figure.max_open_warning'] = 0

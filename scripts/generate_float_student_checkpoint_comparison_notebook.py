@@ -42,7 +42,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from IPython import get_ipython
 from IPython.display import Markdown, display
+from matplotlib_inline.backend_inline import set_matplotlib_formats
 
 PROJECT_ROOT = Path.cwd()
 if not (PROJECT_ROOT / 'src').exists() and (PROJECT_ROOT.parent / 'src').exists():
@@ -61,6 +63,10 @@ VARIANT = {'label': 'FT-5000', 'training': 'finetuning', 'n_shots': 5000}
 DEVICE = 'cpu'
 
 torch.set_grad_enabled(False)
+ip = get_ipython()
+if ip is not None:
+    ip.run_line_magic('matplotlib', 'inline')
+set_matplotlib_formats('png')
 plt.rcParams['figure.figsize'] = (14, 4.5)
 plt.rcParams['figure.dpi'] = 120
 plt.rcParams['figure.max_open_warning'] = 0
