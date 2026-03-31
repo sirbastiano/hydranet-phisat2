@@ -8,28 +8,26 @@ from nbclient import NotebookClient
 from nbformat.v4 import new_code_cell, new_markdown_cell, new_notebook
 
 
-MARKDOWN_INTRO = """# Historical Float Student Checkpoint Comparison
+MARKDOWN_INTRO = """# Float Student Default Checkpoints
 
-This notebook records the pre-prune audit that justified removing weak
-float-domain student checkpoint variants from the default HydraNet catalog.
+This notebook inspects the current strong float-student defaults shipped by
+HydraNet for:
+
+- `anomaly_detection`
+- `burned_area`
+- `fire`
+- `worldfloods`
 
 Current catalog contract:
 
-- `anomaly_detection`, `burned_area`, `fire`, and `worldfloods` now keep only
-  the strong `finetuning` `5000-shot` student checkpoint
-- the `linear_probing` and lower-shot student variants shown below are
-  historical audit data, not part of the current default workflow
-
-Important scope:
-
-- this is **not** a comparison of different model families from the public
-  Phi2FM repo
-- HydraNet currently ships one strong default student checkpoint per float
-  expert; the comparisons below explain why the weaker variants were pruned
+- each of these experts keeps only the strong `finetuning` `5000-shot`
+  student checkpoint
+- weaker `linear_probing` and lower-shot student variants are no longer part
+  of the default workflow
 
 The notebook uses the corrected float export at
-`outputs/routerset/fix30March_floatminmax_selected_anomalyfix/` and preserves
-representative `train` and `validation` patches for the historical audit.
+`outputs/routerset/fix30March_floatminmax_selected_anomalyfix/` and renders
+representative `train` and `validation` patches for each expert.
 """
 
 
@@ -54,30 +52,23 @@ sys.path.insert(0, str(PROJECT_ROOT / 'src'))
 from hydranet import load_student
 from hydranet.moe_training import _reduce_expert_output_to_routing_score
 
-# Historical audit notebook: current float-student defaults keep only FT-5000.
-
 DATASET_ROOT = PROJECT_ROOT / 'outputs' / 'routerset' / 'fix30March_floatminmax_selected_anomalyfix'
 MANIFEST_PATH = DATASET_ROOT / 'manifest_256.jsonl'
-REPORT_PATH = DATASET_ROOT / 'student_checkpoint_comparison_summary.json'
+REPORT_PATH = DATASET_ROOT / 'student_default_checkpoint_summary.json'
 
 EXPERTS = ['anomaly_detection', 'burned_area', 'fire', 'worldfloods']
-VARIANTS = [
-    {'label': 'FT-50', 'training': 'finetuning', 'n_shots': 50},
-    {'label': 'LP-50', 'training': 'linear_probing', 'n_shots': 50},
-    {'label': 'FT-5000', 'training': 'finetuning', 'n_shots': 5000},
-    {'label': 'LP-5000', 'training': 'linear_probing', 'n_shots': 5000},
-]
-BASELINE_LABEL = 'FT-5000'
+VARIANT = {'label': 'FT-5000', 'training': 'finetuning', 'n_shots': 5000}
 DEVICE = 'cpu'
 
 torch.set_grad_enabled(False)
-plt.rcParams['figure.figsize'] = (16, 8)
+plt.rcParams['figure.figsize'] = (14, 4.5)
 plt.rcParams['figure.dpi'] = 120
 plt.rcParams['figure.max_open_warning'] = 0
 
 print('project_root:', PROJECT_ROOT)
 print('dataset_root:', DATASET_ROOT)
 print('manifest_exists:', MANIFEST_PATH.exists())
+print('variant:', VARIANT)
 """
 
 
@@ -120,6 +111,7 @@ def infer_patch(model: torch.nn.Module, chw: np.ndarray) -> dict:
         'conf': conf,
         'score': float(score),
         'histogram': histogram,
+        'mean_conf': float(np.mean(conf)),
     }
 
 
@@ -167,80 +159,57 @@ print(json.dumps([
 CELL_LOAD_MODELS = """models = {}
 model_logs = {}
 for expert in EXPERTS:
-    for variant in VARIANTS:
-        key = (expert, variant['training'], variant['n_shots'])
-        buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
-            model = load_student(
-                task=expert,
-                training=variant['training'],
-                n_shots=variant['n_shots'],
-                auto_load_weights=True,
-            )
-        model.eval()
-        model.to(DEVICE)
-        models[key] = model
-        model_logs[key] = [line for line in buffer.getvalue().splitlines() if line.strip()]
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        model = load_student(
+            task=expert,
+            training=VARIANT['training'],
+            n_shots=VARIANT['n_shots'],
+            auto_load_weights=True,
+        )
+    model.eval()
+    model.to(DEVICE)
+    models[expert] = model
+    model_logs[expert] = [line for line in buffer.getvalue().splitlines() if line.strip()]
 
 for expert in EXPERTS:
-    print(f'## {expert}')
-    for variant in VARIANTS:
-        key = (expert, variant['training'], variant['n_shots'])
-        print(f\"{variant['label']}: {model_logs[key][-1] if model_logs[key] else 'loaded'}\")
-    print()
+    print(f"{expert}: {model_logs[expert][-1] if model_logs[expert] else 'loaded'}")
 """
 
 
-CELL_RENDER = """report = {'dataset_root': str(DATASET_ROOT), 'baseline': BASELINE_LABEL, 'per_patch': []}
+CELL_RENDER = """report = {'dataset_root': str(DATASET_ROOT), 'variant': VARIANT, 'per_patch': []}
 
 for row in selected_rows:
     expert = row['source_dataset']
     split = row.get('moe_split', row['source_split'])
     image = np.load(resolve_path(row['materialized_image_path'])).astype(np.float32, copy=False)
-
-    outputs = {}
-    for variant in VARIANTS:
-        key = (expert, variant['training'], variant['n_shots'])
-        outputs[variant['label']] = infer_patch(models[key], image)
-
-    baseline = outputs[BASELINE_LABEL]
-    table_rows = []
-    for variant in VARIANTS:
-        result = outputs[variant['label']]
-        disagree = float(np.mean(result['pred'] != baseline['pred']))
-        conf_delta = float(np.mean(result['conf'] - baseline['conf']))
-        table_rows.append(
-            {
-                'variant': variant['label'],
-                'score': f\"{result['score']:.4f}\",
-                'mean_conf': f\"{float(np.mean(result['conf'])):.4f}\",
-                'disagree_vs_ft5000': f\"{disagree:.4f}\",
-                'conf_delta_vs_ft5000': f\"{conf_delta:.4f}\",
-                'histogram': result['histogram'],
-            }
-        )
+    result = infer_patch(models[expert], image)
 
     report['per_patch'].append(
         {
             'expert': expert,
             'split': split,
             'sample_id': row['source_sample_id'],
-            'metrics': table_rows,
+            'score': result['score'],
+            'mean_conf': result['mean_conf'],
+            'histogram': result['histogram'],
         }
     )
 
-    display(Markdown(f\"## {expert} | {split} | `{row['source_sample_id']}`\"))
+    display(Markdown(f"## {expert} | {split} | `{row['source_sample_id']}`"))
 
-    fig, axes = plt.subplots(1, 5, figsize=(20, 4.5))
-    fig.suptitle(f\"{expert} | {split} | sample={row['source_sample_id']}\", fontsize=14)
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4.5))
+    fig.suptitle(f"{expert} | {split} | sample={row['source_sample_id']}", fontsize=14)
 
     axes[0].imshow(normalize_display(image, FALSE_RGB_CHANNELS))
     axes[0].set_title('False RGB')
 
-    for index, variant in enumerate(VARIANTS, start=1):
-        result = outputs[variant['label']]
-        axes[index].imshow(result['pred'], cmap='tab20')
-        axes[index].set_title(f\"{variant['label']}\\nscore={result['score']:.4f}\")
+    axes[1].imshow(result['pred'], cmap='tab20')
+    axes[1].set_title(f"{VARIANT['label']} prediction\\nscore={result['score']:.4f}")
+
+    im = axes[2].imshow(result['conf'], cmap='viridis', vmin=0.0, vmax=1.0)
+    axes[2].set_title(f"Confidence\\nmean={result['mean_conf']:.4f}")
+    fig.colorbar(im, ax=axes[2], fraction=0.046, pad=0.04)
 
     for ax in axes:
         ax.set_xticks([])
@@ -252,13 +221,18 @@ for row in selected_rows:
     display(
         Markdown(
             markdown_table(
-                table_rows,
+                [
+                    {
+                        'variant': VARIANT['label'],
+                        'score': f"{result['score']:.4f}",
+                        'mean_conf': f"{result['mean_conf']:.4f}",
+                        'histogram': result['histogram'],
+                    }
+                ],
                 [
                     ('variant', 'variant'),
                     ('score', 'routing score'),
                     ('mean_conf', 'mean confidence'),
-                    ('disagree_vs_ft5000', 'disagree vs FT-5000'),
-                    ('conf_delta_vs_ft5000', 'conf delta vs FT-5000'),
                     ('histogram', 'pred histogram'),
                 ],
             )
@@ -281,14 +255,14 @@ def build_notebook() -> nbformat.NotebookNode:
             new_code_cell(CELL_RENDER),
         ],
         metadata={
-            "kernelspec": {
-                "display_name": "Python 3",
-                "language": "python",
-                "name": "python3",
+            'kernelspec': {
+                'display_name': 'Python 3',
+                'language': 'python',
+                'name': 'python3',
             },
-            "language_info": {
-                "name": "python",
-                "version": "3.13",
+            'language_info': {
+                'name': 'python',
+                'version': '3.13',
             },
         },
     )
@@ -297,25 +271,25 @@ def build_notebook() -> nbformat.NotebookNode:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--output",
+        '--output',
         type=Path,
-        default=Path("notebooks/float_student_checkpoint_comparison.ipynb"),
+        default=Path('notebooks/float_student_checkpoint_comparison.ipynb'),
     )
-    parser.add_argument("--execute", action="store_true")
-    parser.add_argument("--cwd", type=Path, default=Path.cwd())
+    parser.add_argument('--execute', action='store_true')
+    parser.add_argument('--cwd', type=Path, default=Path.cwd())
     args = parser.parse_args()
 
     notebook = build_notebook()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    nbformat.write(notebook, args.output.open("w", encoding="utf-8"))
+    nbformat.write(notebook, args.output.open('w', encoding='utf-8'))
 
     if args.execute:
-        client = NotebookClient(notebook, timeout=3600, kernel_name="python3")
+        client = NotebookClient(notebook, timeout=3600, kernel_name='python3')
         client.execute(cwd=str(args.cwd.resolve()))
-        nbformat.write(notebook, args.output.open("w", encoding="utf-8"))
+        nbformat.write(notebook, args.output.open('w', encoding='utf-8'))
 
     print(args.output)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
