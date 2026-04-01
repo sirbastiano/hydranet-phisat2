@@ -1,0 +1,36 @@
+{
+  "anomaly_detection": {
+    "label_counts": {
+      "cloud": 332,
+      "land": 2159,
+      "marine_algae": 418,
+      "marine_oil": 69,
+      "marine_plastic": 7,
+      "marine_sediments": 396,
+      "turbid_water": 1623,
+      "water": 6043
+    },
+    "new_rows": 9216,
+    "old_rows": 36,
+    "source_scene_count": 36,
+    "split_counts": {
+      "train": 6400,
+      "validation": 2816
+    }
+  },
+  "new_manifest_rows": 15731,
+  "old_manifest_rows": 10151,
+  "roads": {
+    "new_rows": 1200,
+    "old_rows": 4800,
+    "split_counts": {
+      "train": 1000,
+      "validation": 200
+    },
+    "weak_label_counts": {
+      "cloud": 160,
+      "land": 1200,
+      "water": 513
+    }
+  }
+}

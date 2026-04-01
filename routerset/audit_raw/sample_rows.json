@@ -3,90 +3,131 @@
     {
       "all_zero": false,
       "dtype": "float32",
-      "image_path": "routerset/images/anomaly_detection/train/0000000_0_0_full_full.npy",
+      "image_path": "routerset/images/anomaly_detection/train/0000006_1792_1024_256_256.npy",
       "issue_codes": [],
+      "label_coverages": {
+        "land": 0.131825,
+        "marine_sediments": 0.100498,
+        "turbid_water": 0.662218,
+        "water": 0.10546
+      },
       "label_names": [
+        "land",
+        "marine_sediments",
+        "turbid_water",
         "water"
       ],
+      "label_source": "native",
       "layout": "chw",
-      "max": 0.12555456161499023,
-      "mean": 0.07591770589351654,
-      "min": 0.04537959769368172,
+      "max": 0.3589875102043152,
+      "mean": 0.13292133808135986,
+      "min": 0.035899750888347626,
+      "native_label_names": [
+        "land",
+        "marine_sediments",
+        "turbid_water",
+        "water"
+      ],
       "non_finite_count": 0,
       "note_codes": [
-        "sampled_large_array_stats",
-        "large_source_scene"
+        "sampled_large_array_stats"
       ],
-      "patch_height": null,
-      "patch_width": null,
-      "patch_x": 0,
-      "patch_y": 0,
+      "patch_height": 256,
+      "patch_width": 256,
+      "patch_x": 1792,
+      "patch_y": 1024,
       "record_status": "positive",
-      "selection_bucket": "water",
+      "selection_bucket": "land,marine_sediments,turbid_water,water",
       "shape": [
         8,
-        4096,
-        4096
+        256,
+        256
       ],
       "source_dataset": "anomaly_detection",
-      "source_sample_id": "0000000",
+      "source_sample_id": "0000006",
       "source_split": "train",
+      "source_storage_group": "trainval",
       "stats_sampled": true,
       "status": "ok",
-      "std": 0.020267505198717117,
+      "std": 0.07707860320806503,
+      "weak_label_names": [],
       "zero_fraction": 0.0
     },
     {
       "all_zero": false,
       "dtype": "float32",
-      "image_path": "routerset/images/anomaly_detection/validation/0000001_0_0_full_full.npy",
+      "image_path": "routerset/images/anomaly_detection/validation/0000007_3072_2560_256_256.npy",
       "issue_codes": [],
+      "label_coverages": {
+        "cloud": 0.123388,
+        "land": 0.054622,
+        "turbid_water": 0.74795,
+        "water": 0.07404
+      },
       "label_names": [
         "cloud",
         "land",
-        "marine_algae",
-        "turbid_water"
+        "turbid_water",
+        "water"
       ],
+      "label_source": "native",
       "layout": "chw",
-      "max": 0.36135321855545044,
-      "mean": 0.08037959039211273,
-      "min": 0.01733107678592205,
+      "max": 0.08455099910497665,
+      "mean": 0.034892402589321136,
+      "min": 0.009440014138817787,
+      "native_label_names": [
+        "cloud",
+        "land",
+        "turbid_water",
+        "water"
+      ],
       "non_finite_count": 0,
       "note_codes": [
-        "sampled_large_array_stats",
-        "large_source_scene"
+        "sampled_large_array_stats"
       ],
-      "patch_height": null,
-      "patch_width": null,
-      "patch_x": 0,
-      "patch_y": 0,
+      "patch_height": 256,
+      "patch_width": 256,
+      "patch_x": 3072,
+      "patch_y": 2560,
       "record_status": "positive",
-      "selection_bucket": "cloud,land,marine_algae,turbid_water",
+      "selection_bucket": "cloud,land,turbid_water,water",
       "shape": [
         8,
-        4096,
-        4096
+        256,
+        256
       ],
       "source_dataset": "anomaly_detection",
-      "source_sample_id": "0000001",
+      "source_sample_id": "0000007",
       "source_split": "validation",
+      "source_storage_group": "trainval",
       "stats_sampled": true,
       "status": "ok",
-      "std": 0.05384114012122154,
+      "std": 0.02047611214220524,
+      "weak_label_names": [],
       "zero_fraction": 0.0
     },
     {
       "all_zero": false,
       "dtype": "float32",
-      "image_path": "routerset/images/burned_area/train/0000002_0_0_256_256.npy",
+      "image_path": "routerset/images/burned_area/train/0007065_0_0_256_256.npy",
       "issue_codes": [],
+      "label_coverages": {
+        "cloud": 0.277084,
+        "water": 0.089279
+      },
       "label_names": [
-        "burned_area"
+        "cloud",
+        "water"
       ],
+      "label_source": "native",
       "layout": "chw",
-      "max": 0.9154667854309082,
-      "mean": 0.5195792317390442,
-      "min": 0.27564412355422974,
+      "max": 0.9998255372047424,
+      "mean": 0.6535571813583374,
+      "min": 0.21330276131629944,
+      "native_label_names": [
+        "cloud",
+        "water"
+      ],
       "non_finite_count": 0,
       "note_codes": [
         "sampled_large_array_stats"
@@ -96,100 +137,124 @@
       "patch_x": 0,
       "patch_y": 0,
       "record_status": "positive",
-      "selection_bucket": "burned_area",
+      "selection_bucket": "cloud,water",
       "shape": [
         7,
         256,
         256
       ],
       "source_dataset": "burned_area",
-      "source_sample_id": "0000002",
+      "source_sample_id": "0007065",
       "source_split": "train",
+      "source_storage_group": "trainval",
       "stats_sampled": true,
       "status": "ok",
-      "std": 0.13655874133110046,
+      "std": 0.2593644857406616,
+      "weak_label_names": [],
       "zero_fraction": 0.0
     },
     {
       "all_zero": false,
       "dtype": "float32",
-      "image_path": "routerset/images/burned_area/validation/0000085_0_0_256_256.npy",
+      "image_path": "routerset/images/burned_area/validation/0001480_0_0_256_256.npy",
       "issue_codes": [],
+      "label_coverages": {
+        "cloud": 0.158691,
+        "water": 0.232986
+      },
       "label_names": [
+        "cloud",
         "water"
       ],
+      "label_source": "native",
       "layout": "chw",
-      "max": 0.8377116918563843,
-      "mean": 0.4195631146430969,
-      "min": 0.20250312983989716,
+      "max": 0.9998542070388794,
+      "mean": 0.665372371673584,
+      "min": 0.1843234747648239,
+      "native_label_names": [
+        "cloud",
+        "water"
+      ],
       "non_finite_count": 0,
       "note_codes": [
         "sampled_large_array_stats"
       ],
       "patch_height": 256,
       "patch_width": 256,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "cloud,water",
+      "shape": [
+        7,
+        256,
+        256
+      ],
+      "source_dataset": "burned_area",
+      "source_sample_id": "0001480",
+      "source_split": "validation",
+      "source_storage_group": "trainval",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 0.287360817193985,
+      "weak_label_names": [],
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "float32",
+      "image_path": "routerset/images/fire/train/0003325_0_0_full_full.npy",
+      "issue_codes": [],
+      "label_coverages": {},
+      "label_names": [
+        "water"
+      ],
+      "label_source": "native",
+      "layout": "chw",
+      "max": 0.10224273800849915,
+      "mean": 0.050853125751018524,
+      "min": 0.026654133573174477,
+      "native_label_names": [
+        "water"
+      ],
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats"
+      ],
+      "patch_height": null,
+      "patch_width": null,
       "patch_x": 0,
       "patch_y": 0,
       "record_status": "positive",
       "selection_bucket": "water",
-      "shape": [
-        7,
-        256,
-        256
-      ],
-      "source_dataset": "burned_area",
-      "source_sample_id": "0000085",
-      "source_split": "validation",
-      "stats_sampled": true,
-      "status": "ok",
-      "std": 0.10784338414669037,
-      "zero_fraction": 0.0
-    },
-    {
-      "all_zero": false,
-      "dtype": "float32",
-      "image_path": "routerset/images/fire/train/0002292_0_0_full_full.npy",
-      "issue_codes": [],
-      "label_names": [
-        "active_fire"
-      ],
-      "layout": "chw",
-      "max": 0.29761406779289246,
-      "mean": 0.17665749788284302,
-      "min": 0.0967986136674881,
-      "non_finite_count": 0,
-      "note_codes": [
-        "sampled_large_array_stats"
-      ],
-      "patch_height": null,
-      "patch_width": null,
-      "patch_x": 0,
-      "patch_y": 0,
-      "record_status": "positive",
-      "selection_bucket": "active_fire",
       "shape": [
         8,
         256,
         256
       ],
       "source_dataset": "fire",
-      "source_sample_id": "0002292",
+      "source_sample_id": "0003325",
       "source_split": "train",
+      "source_storage_group": "test",
       "stats_sampled": true,
       "status": "ok",
-      "std": 0.041725706309080124,
+      "std": 0.021834515035152435,
+      "weak_label_names": [],
       "zero_fraction": 0.0
     },
     {
       "all_zero": false,
       "dtype": "float32",
-      "image_path": "routerset/images/fire/validation/0000065_0_0_full_full.npy",
+      "image_path": "routerset/images/fire/validation/0000719_0_0_full_full.npy",
       "issue_codes": [],
+      "label_coverages": {},
       "label_names": [],
+      "label_source": "native",
       "layout": "chw",
-      "max": 0.3223167657852173,
-      "mean": 0.1303606629371643,
-      "min": 0.035020895302295685,
+      "max": 0.33840692043304443,
+      "mean": 0.1391160488128662,
+      "min": 0.04729579761624336,
+      "native_label_names": [],
       "non_finite_count": 0,
       "note_codes": [
         "sampled_large_array_stats"
@@ -206,26 +271,46 @@
         256
       ],
       "source_dataset": "fire",
-      "source_sample_id": "0000065",
+      "source_sample_id": "0000719",
       "source_split": "validation",
+      "source_storage_group": "test",
       "stats_sampled": true,
       "status": "ok",
-      "std": 0.06840858608484268,
+      "std": 0.06127992644906044,
+      "weak_label_names": [],
       "zero_fraction": 0.0
     },
     {
       "all_zero": false,
       "dtype": "uint16",
-      "image_path": "routerset/images/lc/train/52shot_train_000000_0_0_128_128.npy",
+      "image_path": "routerset/images/lc/train/52shot_train_000033_0_0_128_128.npy",
       "issue_codes": [],
+      "label_coverages": {
+        "bare_sparse_vegetation": 0.013184,
+        "built_up": 0.007812,
+        "cropland": 0.364929,
+        "grassland": 0.286865,
+        "herbaceous_wetland": 0.010254,
+        "permanent_water": 0.249268,
+        "tree_cover": 0.067688
+      },
       "label_names": [
+        "cropland",
         "grassland",
+        "permanent_water",
         "tree_cover"
       ],
+      "label_source": "native",
       "layout": "hwc",
-      "max": 1361.0,
-      "mean": 297.897216796875,
-      "min": 172.0,
+      "max": 2346.0,
+      "mean": 639.096923828125,
+      "min": 44.0,
+      "native_label_names": [
+        "cropland",
+        "grassland",
+        "permanent_water",
+        "tree_cover"
+      ],
       "non_finite_count": 0,
       "note_codes": [
         "sampled_large_array_stats",
@@ -236,32 +321,52 @@
       "patch_x": 0,
       "patch_y": 0,
       "record_status": "positive",
-      "selection_bucket": "grassland,tree_cover",
+      "selection_bucket": "cropland,grassland,permanent_water,tree_cover",
       "shape": [
         128,
         128,
         10
       ],
       "source_dataset": "lc",
-      "source_sample_id": "52shot_train_000000",
+      "source_sample_id": "52shot_train_000033",
       "source_split": "train",
+      "source_storage_group": "52_shot_lc",
       "stats_sampled": true,
       "status": "ok",
-      "std": 99.27837741785736,
+      "std": 326.79873838566,
+      "weak_label_names": [],
       "zero_fraction": 0.0
     },
     {
       "all_zero": false,
       "dtype": "uint16",
-      "image_path": "routerset/images/lc/validation/52shot_val_000000_0_0_128_128.npy",
+      "image_path": "routerset/images/lc/validation/52shot_val_000007_0_0_128_128.npy",
       "issue_codes": [],
+      "label_coverages": {
+        "bare_sparse_vegetation": 0.005493,
+        "built_up": 0.517822,
+        "cropland": 0.025757,
+        "grassland": 0.212219,
+        "shrubland": 0.162781,
+        "tree_cover": 0.075928
+      },
       "label_names": [
+        "built_up",
+        "grassland",
+        "shrubland",
         "tree_cover"
       ],
+      "label_source": "native",
       "layout": "hwc",
-      "max": 1612.0,
-      "mean": 221.5374755859375,
-      "min": 108.0,
+      "max": 6267.0,
+      "mean": 893.6998291015625,
+      "min": 156.0,
+      "native_label_names": [
+        "built_up",
+        "grassland",
+        "shrubland",
+        "tree_cover"
+      ],
       "non_finite_count": 0,
       "note_codes": [
         "sampled_large_array_stats",
@@ -272,142 +377,157 @@
       "patch_x": 0,
       "patch_y": 0,
       "record_status": "positive",
-      "selection_bucket": "tree_cover",
+      "selection_bucket": "built_up,grassland,shrubland,tree_cover",
       "shape": [
         128,
         128,
         10
       ],
       "source_dataset": "lc",
-      "source_sample_id": "52shot_val_000000",
+      "source_sample_id": "52shot_val_000007",
       "source_split": "validation",
+      "source_storage_group": "52_shot_lc",
       "stats_sampled": true,
       "status": "ok",
-      "std": 98.4248407627577,
+      "std": 734.6386773042766,
+      "weak_label_names": [],
       "zero_fraction": 0.0
     },
     {
       "all_zero": false,
       "dtype": "uint16",
-      "image_path": "routerset/images/roads/train/500shot_train_000001_0_0_128_128.npy",
+      "image_path": "routerset/images/roads/train/500shot_train_mosaic_000262_0_0_256_256.npy",
       "issue_codes": [],
-      "label_names": [
-        "road_present"
-      ],
-      "layout": "hwc",
-      "max": 976.0,
-      "mean": 626.89501953125,
-      "min": 444.0,
-      "non_finite_count": 0,
-      "note_codes": [
-        "sampled_large_array_stats",
-        "raw_uint16_reflectance"
-      ],
-      "patch_height": 128,
-      "patch_width": 128,
-      "patch_x": 0,
-      "patch_y": 0,
-      "record_status": "positive",
-      "selection_bucket": "road_present",
-      "shape": [
-        128,
-        128,
-        10
-      ],
-      "source_dataset": "roads",
-      "source_sample_id": "500shot_train_000001",
-      "source_split": "train",
-      "stats_sampled": true,
-      "status": "ok",
-      "std": 73.18178861014061,
-      "zero_fraction": 0.0
-    },
-    {
-      "all_zero": false,
-      "dtype": "uint16",
-      "image_path": "routerset/images/roads/validation/500shot_val_000001_0_0_128_128.npy",
-      "issue_codes": [],
-      "label_names": [
-        "road_present"
-      ],
-      "layout": "hwc",
-      "max": 1582.0,
-      "mean": 773.205322265625,
-      "min": 383.0,
-      "non_finite_count": 0,
-      "note_codes": [
-        "sampled_large_array_stats",
-        "raw_uint16_reflectance"
-      ],
-      "patch_height": 128,
-      "patch_width": 128,
-      "patch_x": 0,
-      "patch_y": 0,
-      "record_status": "positive",
-      "selection_bucket": "road_present",
-      "shape": [
-        128,
-        128,
-        10
-      ],
-      "source_dataset": "roads",
-      "source_sample_id": "500shot_val_000001",
-      "source_split": "validation",
-      "stats_sampled": true,
-      "status": "ok",
-      "std": 211.18604993350587,
-      "zero_fraction": 0.0
-    },
-    {
-      "all_zero": false,
-      "dtype": "float32",
-      "image_path": "routerset/images/worldfloods/train/0000071_0_256_256_256.npy",
-      "issue_codes": [],
+      "label_coverages": {
+        "cloud": 0.052002,
+        "land": 0.880432,
+        "road_present": 0.060425,
+        "water": 0.067566
+      },
       "label_names": [
         "cloud",
+        "land",
+        "road_present",
         "water"
       ],
-      "layout": "chw",
-      "max": 0.36660000681877136,
-      "mean": 0.20094475150108337,
-      "min": 0.11089999973773956,
+      "label_source": "native+heuristic_weak",
+      "layout": "hwc",
+      "max": 12872.0,
+      "mean": 2133.6361083984375,
+      "min": 1.0,
+      "native_label_names": [
+        "road_present"
+      ],
       "non_finite_count": 0,
       "note_codes": [
-        "sampled_large_array_stats"
+        "sampled_large_array_stats",
+        "raw_uint16_reflectance"
       ],
       "patch_height": 256,
       "patch_width": 256,
-      "patch_x": 256,
+      "patch_x": 0,
       "patch_y": 0,
       "record_status": "positive",
-      "selection_bucket": "cloud,water",
+      "selection_bucket": "cloud,land,road_present,water",
       "shape": [
-        8,
         256,
-        256
+        256,
+        10
       ],
-      "source_dataset": "worldfloods",
-      "source_sample_id": "0000071",
+      "source_dataset": "roads",
+      "source_sample_id": "500shot_train_mosaic_000262",
       "source_split": "train",
+      "source_storage_group": "500_shot_roads_mosaic",
       "stats_sampled": true,
       "status": "ok",
-      "std": 0.04677774757146835,
+      "std": 3556.1938182801173,
+      "weak_label_names": [
+        "cloud",
+        "land",
+        "water"
+      ],
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "uint16",
+      "image_path": "routerset/images/roads/validation/500shot_val_mosaic_000059_0_0_256_256.npy",
+      "issue_codes": [],
+      "label_coverages": {
+        "cloud": 0.050003,
+        "land": 0.850815,
+        "road_present": 0.025421,
+        "water": 0.099182
+      },
+      "label_names": [
+        "cloud",
+        "land",
+        "road_present",
+        "water"
+      ],
+      "label_source": "native+heuristic_weak",
+      "layout": "hwc",
+      "max": 9928.0,
+      "mean": 1333.9610595703125,
+      "min": 86.0,
+      "native_label_names": [
+        "road_present"
+      ],
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats",
+        "raw_uint16_reflectance"
+      ],
+      "patch_height": 256,
+      "patch_width": 256,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "cloud,land,road_present,water",
+      "shape": [
+        256,
+        256,
+        10
+      ],
+      "source_dataset": "roads",
+      "source_sample_id": "500shot_val_mosaic_000059",
+      "source_split": "validation",
+      "source_storage_group": "500_shot_roads_mosaic",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 1923.8089162295475,
+      "weak_label_names": [
+        "cloud",
+        "land",
+        "water"
+      ],
       "zero_fraction": 0.0
     },
     {
       "all_zero": false,
       "dtype": "float32",
-      "image_path": "routerset/images/worldfloods/validation/0000803_0_0_256_256.npy",
+      "image_path": "routerset/images/worldfloods/train/0009469_0_0_256_256.npy",
       "issue_codes": [],
+      "label_coverages": {
+        "cloud": 0.877686,
+        "land": 0.058212,
+        "water": 0.064102
+      },
       "label_names": [
         "cloud",
         "land",
         "water"
       ],
+      "label_source": "native",
       "layout": "chw",
-      "max": 1.114400029182434,
-      "mean": 0.38650524616241455,
-      "min": 0.07240000367164612,
+      "max": 1.2213000059127808,
+      "mean": 0.5795674324035645,
+      "min": 0.04179999977350235,
+      "native_label_names": [
+        "cloud",
+        "land",
+        "water"
+      ],
       "non_finite_count": 0,
       "note_codes": [
         "sampled_large_array_stats"
@@ -424,11 +544,63 @@
         256
       ],
       "source_dataset": "worldfloods",
-      "source_sample_id": "0000803",
-      "source_split": "validation",
+      "source_sample_id": "0009469",
+      "source_split": "train",
+      "source_storage_group": "trainval",
       "stats_sampled": true,
       "status": "ok",
-      "std": 0.19300375878810883,
+      "std": 0.29909634590148926,
+      "weak_label_names": [],
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "float32",
+      "image_path": "routerset/images/worldfloods/validation/0043176_0_256_256_256.npy",
+      "issue_codes": [],
+      "label_coverages": {
+        "cloud": 0.094727,
+        "land": 0.849243,
+        "water": 0.05603
+      },
+      "label_names": [
+        "cloud",
+        "land",
+        "water"
+      ],
+      "label_source": "native",
+      "layout": "chw",
+      "max": 0.5795999765396118,
+      "mean": 0.15375877916812897,
+      "min": 0.02879999950528145,
+      "native_label_names": [
+        "cloud",
+        "land",
+        "water"
+      ],
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats"
+      ],
+      "patch_height": 256,
+      "patch_width": 256,
+      "patch_x": 256,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "cloud,land,water",
+      "shape": [
+        8,
+        256,
+        256
+      ],
+      "source_dataset": "worldfloods",
+      "source_sample_id": "0043176",
+      "source_split": "validation",
+      "source_storage_group": "trainval",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 0.11925134807825089,
+      "weak_label_names": [],
       "zero_fraction": 0.0
     }
   ]

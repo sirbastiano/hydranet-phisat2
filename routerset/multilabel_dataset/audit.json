@@ -1,120 +1,49 @@
 {
-  "seed": 42,
-  "candidate_dataset_split": {
-    "fire": {
-      "train": 2469,
-      "validation": 25
-    },
-    "burned_area": {
-      "train": 8000,
-      "validation": 2400
-    },
-    "anomaly_detection": {
-      "train": 25,
-      "validation": 11
-    },
-    "worldfloods": {
-      "train": 4000,
-      "validation": 1000
-    },
-    "lc": {
-      "train": 52,
-      "validation": 11
-    },
-    "roads": {
-      "train": 4000,
-      "validation": 800
-    }
-  },
-  "selected_dataset_split": {
-    "fire": {
-      "train": 1586,
-      "validation": 14
-    },
-    "burned_area": {
-      "train": 5149,
-      "validation": 1511
-    },
-    "anomaly_detection": {
-      "train": 25,
-      "validation": 11
-    },
-    "worldfloods": {
-      "train": 1870,
-      "validation": 483
-    },
-    "lc": {
-      "train": 52,
-      "validation": 11
-    },
-    "roads": {
-      "train": 4000,
-      "validation": 800
-    }
-  },
   "candidate_bucket_counts": {
-    "anomaly_detection:cloud,land,marine_algae,turbid_water": 1,
-    "anomaly_detection:cloud,land,marine_algae,turbid_water,water": 1,
-    "anomaly_detection:cloud,land,marine_sediments,turbid_water,water": 1,
-    "anomaly_detection:land,marine_oil,turbid_water,water": 3,
-    "anomaly_detection:land,marine_sediments,turbid_water": 1,
-    "anomaly_detection:land,marine_sediments,turbid_water,water": 3,
-    "anomaly_detection:land,water": 8,
-    "anomaly_detection:marine_algae,turbid_water": 1,
-    "anomaly_detection:water": 17,
-    "burned_area:<empty>": 5512,
-    "burned_area:burned_area": 1807,
-    "burned_area:cloud": 2228,
+    "anomaly_detection:<empty>": 185,
+    "anomaly_detection:cloud": 42,
+    "anomaly_detection:cloud,land": 117,
+    "anomaly_detection:cloud,land,marine_algae": 9,
+    "anomaly_detection:cloud,land,marine_sediments": 2,
+    "anomaly_detection:cloud,land,marine_sediments,turbid_water": 5,
+    "anomaly_detection:cloud,land,turbid_water": 8,
+    "anomaly_detection:cloud,land,turbid_water,water": 1,
+    "anomaly_detection:cloud,land,water": 2,
+    "anomaly_detection:cloud,marine_algae": 10,
+    "anomaly_detection:cloud,marine_algae,turbid_water": 1,
+    "anomaly_detection:cloud,marine_sediments": 4,
+    "anomaly_detection:cloud,marine_sediments,turbid_water": 12,
+    "anomaly_detection:cloud,turbid_water": 18,
+    "anomaly_detection:cloud,turbid_water,water": 8,
+    "anomaly_detection:cloud,water": 93,
+    "anomaly_detection:land": 1233,
+    "anomaly_detection:land,marine_algae": 45,
+    "anomaly_detection:land,marine_algae,turbid_water": 18,
+    "anomaly_detection:land,marine_oil,turbid_water": 11,
+    "anomaly_detection:land,marine_plastic,water": 7,
+    "anomaly_detection:land,marine_sediments": 61,
+    "anomaly_detection:land,marine_sediments,turbid_water": 36,
+    "anomaly_detection:land,marine_sediments,turbid_water,water": 2,
+    "anomaly_detection:land,turbid_water": 93,
+    "anomaly_detection:land,turbid_water,water": 20,
+    "anomaly_detection:land,water": 489,
+    "anomaly_detection:marine_algae": 69,
+    "anomaly_detection:marine_algae,turbid_water": 266,
+    "anomaly_detection:marine_oil": 1,
+    "anomaly_detection:marine_oil,turbid_water": 49,
+    "anomaly_detection:marine_oil,turbid_water,water": 8,
+    "anomaly_detection:marine_sediments": 67,
+    "anomaly_detection:marine_sediments,turbid_water": 162,
+    "anomaly_detection:marine_sediments,turbid_water,water": 44,
+    "anomaly_detection:marine_sediments,water": 1,
+    "anomaly_detection:turbid_water": 649,
+    "anomaly_detection:turbid_water,water": 212,
+    "anomaly_detection:water": 5156,
+    "burned_area:<empty>": 226,
+    "burned_area:burned_area": 408,
+    "burned_area:cloud": 475,
     "burned_area:cloud,water": 6,
-    "burned_area:water": 847,
-    "fire:<empty>": 1794,
-    "fire:active_fire": 279,
-    "fire:burned_area": 280,
-    "fire:water": 141,
-    "lc:bare_sparse_vegetation,grassland,shrubland": 1,
-    "lc:bare_sparse_vegetation,permanent_water,shrubland": 1,
-    "lc:built_up,cropland,grassland,tree_cover": 1,
-    "lc:built_up,grassland,shrubland": 1,
-    "lc:built_up,grassland,shrubland,tree_cover": 1,
-    "lc:built_up,grassland,tree_cover": 1,
-    "lc:built_up,tree_cover": 3,
-    "lc:cropland,grassland,herbaceous_wetland,tree_cover": 2,
-    "lc:cropland,grassland,permanent_water,tree_cover": 1,
-    "lc:cropland,grassland,tree_cover": 1,
-    "lc:grassland,mangroves,tree_cover": 1,
-    "lc:grassland,permanent_water,tree_cover": 2,
-    "lc:grassland,shrubland,tree_cover": 2,
-    "lc:grassland,tree_cover": 21,
-    "lc:herbaceous_wetland,mangroves": 1,
-    "lc:mangroves,permanent_water,tree_cover": 2,
-    "lc:permanent_water": 9,
-    "lc:shrubland,tree_cover": 4,
-    "lc:tree_cover": 8,
-    "roads:<empty>": 2098,
-    "roads:road_present": 2702,
-    "worldfloods:cloud": 1198,
-    "worldfloods:cloud,land": 2602,
-    "worldfloods:cloud,land,water": 541,
-    "worldfloods:cloud,water": 285,
-    "worldfloods:land": 245,
-    "worldfloods:land,water": 106,
-    "worldfloods:water": 23
-  },
-  "selected_bucket_counts": {
-    "anomaly_detection:cloud,land,marine_algae,turbid_water": 1,
-    "anomaly_detection:cloud,land,marine_algae,turbid_water,water": 1,
-    "anomaly_detection:cloud,land,marine_sediments,turbid_water,water": 1,
-    "anomaly_detection:land,marine_oil,turbid_water,water": 3,
-    "anomaly_detection:land,marine_sediments,turbid_water": 1,
-    "anomaly_detection:land,marine_sediments,turbid_water,water": 3,
-    "anomaly_detection:land,water": 8,
-    "anomaly_detection:marine_algae,turbid_water": 1,
-    "anomaly_detection:water": 17,
-    "burned_area:<empty>": 2000,
-    "burned_area:burned_area": 1807,
-    "burned_area:cloud": 2000,
-    "burned_area:cloud,water": 6,
-    "burned_area:water": 847,
+    "burned_area:water": 184,
     "fire:<empty>": 900,
     "fire:active_fire": 279,
     "fire:burned_area": 280,
@@ -138,8 +67,14 @@
     "lc:permanent_water": 9,
     "lc:shrubland,tree_cover": 4,
     "lc:tree_cover": 8,
-    "roads:<empty>": 2098,
-    "roads:road_present": 2702,
+    "roads:cloud,land": 5,
+    "roads:cloud,land,road_present": 50,
+    "roads:cloud,land,road_present,water": 101,
+    "roads:cloud,land,water": 4,
+    "roads:land": 77,
+    "roads:land,road_present": 555,
+    "roads:land,road_present,water": 325,
+    "roads:land,water": 83,
     "worldfloods:cloud": 650,
     "worldfloods:cloud,land": 900,
     "worldfloods:cloud,land,water": 350,
@@ -148,15 +83,152 @@
     "worldfloods:land,water": 60,
     "worldfloods:water": 23
   },
-  "selected_status_counts": {
-    "below_threshold": 2221,
-    "explicit_negative": 2777,
-    "positive": 10514
+  "candidate_dataset_split": {
+    "anomaly_detection": {
+      "train": 6400,
+      "validation": 2816
+    },
+    "burned_area": {
+      "train": 999,
+      "validation": 300
+    },
+    "fire": {
+      "train": 1586,
+      "validation": 14
+    },
+    "lc": {
+      "train": 52,
+      "validation": 11
+    },
+    "roads": {
+      "train": 1000,
+      "validation": 200
+    },
+    "worldfloods": {
+      "train": 1870,
+      "validation": 483
+    }
   },
   "missing_id_counts": {
     "fire": {
       "train": 31
     }
+  },
+  "seed": 42,
+  "selected_bucket_counts": {
+    "anomaly_detection:<empty>": 185,
+    "anomaly_detection:cloud": 42,
+    "anomaly_detection:cloud,land": 117,
+    "anomaly_detection:cloud,land,marine_algae": 9,
+    "anomaly_detection:cloud,land,marine_sediments": 2,
+    "anomaly_detection:cloud,land,marine_sediments,turbid_water": 5,
+    "anomaly_detection:cloud,land,turbid_water": 8,
+    "anomaly_detection:cloud,land,turbid_water,water": 1,
+    "anomaly_detection:cloud,land,water": 2,
+    "anomaly_detection:cloud,marine_algae": 10,
+    "anomaly_detection:cloud,marine_algae,turbid_water": 1,
+    "anomaly_detection:cloud,marine_sediments": 4,
+    "anomaly_detection:cloud,marine_sediments,turbid_water": 12,
+    "anomaly_detection:cloud,turbid_water": 18,
+    "anomaly_detection:cloud,turbid_water,water": 8,
+    "anomaly_detection:cloud,water": 93,
+    "anomaly_detection:land": 1233,
+    "anomaly_detection:land,marine_algae": 45,
+    "anomaly_detection:land,marine_algae,turbid_water": 18,
+    "anomaly_detection:land,marine_oil,turbid_water": 11,
+    "anomaly_detection:land,marine_plastic,water": 7,
+    "anomaly_detection:land,marine_sediments": 61,
+    "anomaly_detection:land,marine_sediments,turbid_water": 36,
+    "anomaly_detection:land,marine_sediments,turbid_water,water": 2,
+    "anomaly_detection:land,turbid_water": 93,
+    "anomaly_detection:land,turbid_water,water": 20,
+    "anomaly_detection:land,water": 489,
+    "anomaly_detection:marine_algae": 69,
+    "anomaly_detection:marine_algae,turbid_water": 266,
+    "anomaly_detection:marine_oil": 1,
+    "anomaly_detection:marine_oil,turbid_water": 49,
+    "anomaly_detection:marine_oil,turbid_water,water": 8,
+    "anomaly_detection:marine_sediments": 67,
+    "anomaly_detection:marine_sediments,turbid_water": 162,
+    "anomaly_detection:marine_sediments,turbid_water,water": 44,
+    "anomaly_detection:marine_sediments,water": 1,
+    "anomaly_detection:turbid_water": 649,
+    "anomaly_detection:turbid_water,water": 212,
+    "anomaly_detection:water": 5156,
+    "burned_area:<empty>": 226,
+    "burned_area:burned_area": 408,
+    "burned_area:cloud": 475,
+    "burned_area:cloud,water": 6,
+    "burned_area:water": 184,
+    "fire:<empty>": 900,
+    "fire:active_fire": 279,
+    "fire:burned_area": 280,
+    "fire:water": 141,
+    "lc:bare_sparse_vegetation,grassland,shrubland": 1,
+    "lc:bare_sparse_vegetation,permanent_water,shrubland": 1,
+    "lc:built_up,cropland,grassland,tree_cover": 1,
+    "lc:built_up,grassland,shrubland": 1,
+    "lc:built_up,grassland,shrubland,tree_cover": 1,
+    "lc:built_up,grassland,tree_cover": 1,
+    "lc:built_up,tree_cover": 3,
+    "lc:cropland,grassland,herbaceous_wetland,tree_cover": 2,
+    "lc:cropland,grassland,permanent_water,tree_cover": 1,
+    "lc:cropland,grassland,tree_cover": 1,
+    "lc:grassland,mangroves,tree_cover": 1,
+    "lc:grassland,permanent_water,tree_cover": 2,
+    "lc:grassland,shrubland,tree_cover": 2,
+    "lc:grassland,tree_cover": 21,
+    "lc:herbaceous_wetland,mangroves": 1,
+    "lc:mangroves,permanent_water,tree_cover": 2,
+    "lc:permanent_water": 9,
+    "lc:shrubland,tree_cover": 4,
+    "lc:tree_cover": 8,
+    "roads:cloud,land": 5,
+    "roads:cloud,land,road_present": 50,
+    "roads:cloud,land,road_present,water": 101,
+    "roads:cloud,land,water": 4,
+    "roads:land": 77,
+    "roads:land,road_present": 555,
+    "roads:land,road_present,water": 325,
+    "roads:land,water": 83,
+    "worldfloods:cloud": 650,
+    "worldfloods:cloud,land": 900,
+    "worldfloods:cloud,land,water": 350,
+    "worldfloods:cloud,water": 250,
+    "worldfloods:land": 120,
+    "worldfloods:land,water": 60,
+    "worldfloods:water": 23
+  },
+  "selected_dataset_split": {
+    "anomaly_detection": {
+      "train": 6400,
+      "validation": 2816
+    },
+    "burned_area": {
+      "train": 999,
+      "validation": 300
+    },
+    "fire": {
+      "train": 1586,
+      "validation": 14
+    },
+    "lc": {
+      "train": 52,
+      "validation": 11
+    },
+    "roads": {
+      "train": 1000,
+      "validation": 200
+    },
+    "worldfloods": {
+      "train": 1870,
+      "validation": 483
+    }
+  },
+  "selected_status_counts": {
+    "below_threshold": 531,
+    "explicit_negative": 949,
+    "positive": 14251
   },
   "unavailable_datasets": {
     "building": "local phileo-bench_building.zarr is absent and the published downstream_datasets_nshot.zip archive does not contain building labels"

@@ -136,12 +136,18 @@ make train-prepare MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 make smoketest-preflight MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 ```
 
-The canonical dataset root is `routerset/multilabel_dataset/`. The routerset training contract is fixed to `8x256x256`. Large `anomaly_detection` inputs are expanded into deterministic `256x256` tiles. Non-tiled tensors larger than `256` are cut out deterministically, and non-tiled tensors smaller than `256` are zero-padded after channel normalization. `burned_area` raw records were rebuilt from the original OEOBench source and now live in the routerset snapshot as native `7x256x256` scenes instead of downstream `64x128` subpatches. Raw `roads` and `lc` tiles follow the original Phi2FM student preprocessing contract before padding: Sentinel-2 bands are mapped into the 8-channel student layout and scaled by `1/10000`. The float-domain student experts `fire`, `worldfloods`, `burned_area`, and `anomaly_detection` now follow the local Phi2FM downstream contract before padding: channel adaptation first, then per-image channel-wise min-max normalization. Legacy undersized `burned_area` artifacts still use centered padding when encountered, but the canonical routerset raw snapshot no longer depends on that workaround. The preflight `dataset_report.json` now exposes per-expert normalization modes, compatibility-path source-record counts, and sampled true raw shapes and value-range stats for manifest-shaped rows so swapped-coordinate tile fallbacks and manifest-shape assumptions are visible.
+The canonical dataset root is `routerset/multilabel_dataset/`. The routerset training contract is fixed to `8x256x256`. The raw routerset snapshot now stores `anomaly_detection` as deterministic `8x256x256` tiles, using aligned edge tiles when a source scene is not evenly divisible by `256`, instead of `4096x4096` full-scene rows. It stores `burned_area` as native `7x256x256` OEOBench scenes instead of downstream `64x128` subpatches. Raw `roads` rows are now `256x256x10` `uint16` 2x2 mosaics from the published `500_shot_roads` archive; they keep native `road_present` coverage and add heuristic `cloud` / `land` / `water` weak labels under `label_source = native+heuristic_weak`. Raw `roads` and `lc` tiles follow the original Phi2FM student preprocessing contract before padding: Sentinel-2 bands are mapped into the 8-channel student layout and scaled by `1/10000`. The float-domain student experts `fire`, `worldfloods`, `burned_area`, and `anomaly_detection` now follow the local Phi2FM downstream contract before padding: channel adaptation first, then per-image channel-wise min-max normalization. Legacy undersized `burned_area` artifacts still use centered padding when encountered, but the canonical routerset raw snapshot no longer depends on that workaround. The preflight `dataset_report.json` now exposes per-expert normalization modes, compatibility-path source-record counts, and sampled true raw shapes and value-range stats for manifest-shaped rows so swapped-coordinate tile fallbacks and manifest-shape assumptions are visible.
 
 To rebuild the raw burned-area slice from source and refresh the local routerset snapshot, use:
 
 ```bash
 env PYTHONPATH=src python3 scripts/rebuild_routerset_burned_area_from_source.py --routerset-dir routerset
+```
+
+To rebuild the raw `roads` mosaics and `anomaly_detection` tiles from source and refresh the local routerset snapshot, use:
+
+```bash
+env PYTHONPATH=src python3 scripts/rebuild_routerset_roads_anomaly_from_source.py --routerset-dir routerset
 ```
 
 For a concrete corrected dataset export, use:

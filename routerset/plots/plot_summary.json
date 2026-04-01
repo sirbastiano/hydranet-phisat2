@@ -1,5 +1,5 @@
 {
-  "num_records": 15512,
+  "num_records": 15731,
   "datasets_included": [
     "fire",
     "burned_area",
@@ -9,63 +9,63 @@
     "roads"
   ],
   "dataset_totals": {
+    "anomaly_detection": 9216,
+    "burned_area": 1299,
     "fire": 1600,
-    "burned_area": 6660,
-    "anomaly_detection": 36,
-    "worldfloods": 2353,
     "lc": 63,
-    "roads": 4800
+    "roads": 1200,
+    "worldfloods": 2353
   },
   "status_counts": {
-    "below_threshold": 2221,
-    "explicit_negative": 2777,
-    "positive": 10514
+    "below_threshold": 531,
+    "explicit_negative": 949,
+    "positive": 14251
   },
   "top_labels": [
     [
-      "cloud",
-      4159
-    ],
-    [
-      "road_present",
-      2702
-    ],
-    [
-      "burned_area",
-      2087
-    ],
-    [
       "water",
-      1710
+      7570
     ],
     [
       "land",
-      1448
+      4789
+    ],
+    [
+      "cloud",
+      3123
+    ],
+    [
+      "turbid_water",
+      1623
+    ],
+    [
+      "road_present",
+      1031
+    ],
+    [
+      "burned_area",
+      688
+    ],
+    [
+      "marine_algae",
+      418
+    ],
+    [
+      "marine_sediments",
+      396
     ],
     [
       "active_fire",
       279
     ],
     [
-      "tree_cover",
-      50
-    ],
-    [
-      "grassland",
-      35
-    ],
-    [
-      "permanent_water",
-      15
-    ],
-    [
-      "turbid_water",
-      11
+      "marine_oil",
+      69
     ]
   ],
   "label_cardinality": {
     "min": 0,
-    "max": 5,
-    "mean": 0.8083
+    "max": 4,
+    "mean": 1.2793
   }
 }

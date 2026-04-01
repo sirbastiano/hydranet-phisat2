@@ -4,13 +4,12 @@
   "issue_counts": {},
   "manifest_path": "routerset/manifest.jsonl",
   "note_counts": {
-    "large_source_scene": 2,
     "raw_uint16_reflectance": 4,
     "sampled_large_array_stats": 12
   },
   "per_dataset": {
     "anomaly_detection": {
-      "row_count": 36,
+      "row_count": 9216,
       "sample_dtype_counts": {
         "float32": 2
       },
@@ -18,7 +17,7 @@
         "chw": 2
       },
       "sample_shape_counts": {
-        "8x4096x4096": 2
+        "8x256x256": 2
       },
       "sample_zero_fraction": {
         "max": 0.0,
@@ -27,11 +26,11 @@
         "min": 0.0
       },
       "split_counts": {
-        "train": 25,
-        "validation": 11
+        "train": 6400,
+        "validation": 2816
       },
       "status_counts": {
-        "ok": 36
+        "ok": 9216
       }
     },
     "burned_area": {
@@ -110,7 +109,7 @@
       }
     },
     "roads": {
-      "row_count": 4800,
+      "row_count": 1200,
       "sample_dtype_counts": {
         "uint16": 2
       },
@@ -118,7 +117,7 @@
         "hwc": 2
       },
       "sample_shape_counts": {
-        "128x128x10": 2
+        "256x256x10": 2
       },
       "sample_zero_fraction": {
         "max": 0.0,
@@ -127,11 +126,11 @@
         "min": 0.0
       },
       "split_counts": {
-        "train": 4000,
-        "validation": 800
+        "train": 1000,
+        "validation": 200
       },
       "status_counts": {
-        "ok": 4800
+        "ok": 1200
       }
     },
     "worldfloods": {
@@ -160,9 +159,9 @@
       }
     }
   },
-  "row_count": 10151,
+  "row_count": 15731,
   "sample_rows_path": "routerset/audit_raw/sample_rows.json",
   "status_counts": {
-    "ok": 10151
+    "ok": 15731
   }
 }

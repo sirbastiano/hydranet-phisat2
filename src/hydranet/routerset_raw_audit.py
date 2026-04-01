@@ -23,10 +23,10 @@ ROUTERSET_SWAPPED_TILE_DATASETS = frozenset({"burned_area", "worldfloods"})
 RAW_DATASET_CONTRACTS: dict[str, dict[str, Any]] = {
     "fire": {"shape": (8, 256, 256), "dtype": "float32", "layout": "chw"},
     "burned_area": {"shape": (7, 256, 256), "dtype": "float32", "layout": "chw"},
-    "anomaly_detection": {"shape": (8, 4096, 4096), "dtype": "float32", "layout": "chw"},
+    "anomaly_detection": {"shape": (8, 256, 256), "dtype": "float32", "layout": "chw"},
     "worldfloods": {"shape": (8, 256, 256), "dtype": "float32", "layout": "chw"},
     "lc": {"shape": (128, 128, 10), "dtype": "uint16", "layout": "hwc"},
-    "roads": {"shape": (128, 128, 10), "dtype": "uint16", "layout": "hwc"},
+    "roads": {"shape": (256, 256, 10), "dtype": "uint16", "layout": "hwc"},
 }
 RGB_CHANNELS = (2, 1, 0)
 FALSE_RGB_CHANNELS = (4, 2, 1)
@@ -231,6 +231,11 @@ def audit_row_record(
         "record_status": str(row.get("record_status", "")),
         "selection_bucket": str(row.get("selection_bucket", "")),
         "label_names": list(row.get("label_names") or []),
+        "native_label_names": list(row.get("native_label_names") or []),
+        "weak_label_names": list(row.get("weak_label_names") or []),
+        "label_source": str(row.get("label_source", "")),
+        "label_coverages": dict(row.get("label_coverages") or {}),
+        "source_storage_group": str(row.get("source_storage_group", "")),
         "patch_x": int(row.get("patch_x") or 0),
         "patch_y": int(row.get("patch_y") or 0),
         "patch_width": row.get("patch_width"),
@@ -270,7 +275,7 @@ def enrich_sample_row(row: Mapping[str, Any]) -> dict[str, Any]:
         issue_codes.append("all_zero_array")
     if bool(stats["stats_sampled"]):
         note_codes.append("sampled_large_array_stats")
-    if str(record["source_dataset"]) == "anomaly_detection":
+    if str(record["source_dataset"]) == "anomaly_detection" and max(int(stats["shape"][1]), int(stats["shape"][2])) > 256:
         note_codes.append("large_source_scene")
     if str(record["source_dataset"]) in {"roads", "lc"}:
         note_codes.append("raw_uint16_reflectance")
@@ -288,6 +293,18 @@ def select_sample_rows(file_rows: Sequence[Mapping[str, Any]]) -> list[dict[str,
     for row in file_rows:
         grouped[(str(row["source_dataset"]), str(row["source_split"]))].append(row)
 
+    def richness(row: Mapping[str, Any]) -> tuple[float, float, float, str]:
+        label_names = list(row.get("label_names") or [])
+        weak_labels = list(row.get("weak_label_names") or [])
+        coverages = row.get("label_coverages") or {}
+        max_coverage = max((float(value) for value in coverages.values()), default=0.0)
+        return (
+            float(len(label_names)),
+            float(len(weak_labels)),
+            max_coverage,
+            str(row.get("source_sample_id", "")),
+        )
+
     selected: list[dict[str, Any]] = []
     for key in sorted(grouped):
         rows = sorted(grouped[key], key=_row_sort_key)
@@ -295,7 +312,8 @@ def select_sample_rows(file_rows: Sequence[Mapping[str, Any]]) -> list[dict[str,
         if not preferred:
             preferred = rows
         positive = [row for row in preferred if row.get("label_names")]
-        chosen = positive[0] if positive else preferred[len(preferred) // 2]
+        candidate_pool = positive if positive else preferred
+        chosen = max(candidate_pool, key=richness)
         selected.append(dict(chosen))
     return selected
 
@@ -360,7 +378,7 @@ def _plot_zero_fraction_boxplot(file_rows: Sequence[Mapping[str, Any]], path: Pa
         for dataset in datasets
     ]
     fig, ax = plt.subplots(figsize=(10, 4))
-    ax.boxplot(series, labels=datasets, showfliers=False)
+    ax.boxplot(series, tick_labels=datasets, showfliers=False)
     ax.set_ylabel("zero fraction")
     ax.set_title("Representative Raw Routerset Zero Fraction by Dataset")
     plt.xticks(rotation=30, ha="right")

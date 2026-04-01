@@ -12,6 +12,7 @@ from hydranet.routerset_raw_audit import (
     STATUS_OK,
     audit_raw_routerset_dataset,
     resolve_raw_routerset_image_path,
+    select_sample_rows,
 )
 
 
@@ -76,6 +77,7 @@ class TestRoutersetRawAudit(unittest.TestCase):
 
             summary = audit_raw_routerset_dataset(root.parent, output_dir=root / 'audit_raw')
             audit_rows = [json.loads(line) for line in (root / 'audit_raw' / 'file_audit.jsonl').read_text(encoding='utf-8').splitlines() if line.strip()]
+            summary_exists = (root / 'audit_raw' / 'summary.json').exists()
 
         self.assertEqual(summary['row_count'], 2)
         self.assertEqual(summary['per_dataset']['burned_area']['row_count'], 1)
@@ -83,6 +85,41 @@ class TestRoutersetRawAudit(unittest.TestCase):
         self.assertEqual(summary['status_counts'][STATUS_OK], 1)
         self.assertEqual(summary['status_counts'][STATUS_ERROR], 1)
         self.assertIn('missing_file', summary['issue_counts'])
-        self.assertTrue((root / 'audit_raw' / 'summary.json').exists())
+        self.assertTrue(summary_exists)
         self.assertEqual(audit_rows[0]['status'], STATUS_OK)
         self.assertEqual(audit_rows[1]['status'], STATUS_ERROR)
+
+    def test_select_sample_rows_prefers_richer_positive_labels(self) -> None:
+        rows = [
+            {
+                'source_dataset': 'roads',
+                'source_split': 'train',
+                'source_sample_id': '0000001',
+                'status': STATUS_OK,
+                'label_names': ['road_present'],
+                'weak_label_names': [],
+                'label_coverages': {'road_present': 0.2},
+                'patch_x': 0,
+                'patch_y': 0,
+                'patch_width': 256,
+                'patch_height': 256,
+            },
+            {
+                'source_dataset': 'roads',
+                'source_split': 'train',
+                'source_sample_id': '0000002',
+                'status': STATUS_OK,
+                'label_names': ['cloud', 'land', 'road_present'],
+                'weak_label_names': ['cloud', 'land'],
+                'label_coverages': {'road_present': 0.1, 'cloud': 0.9, 'land': 0.1},
+                'patch_x': 0,
+                'patch_y': 0,
+                'patch_width': 256,
+                'patch_height': 256,
+            },
+        ]
+
+        selected = select_sample_rows(rows)
+
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0]['source_sample_id'], '0000002')
