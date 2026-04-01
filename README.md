@@ -130,12 +130,19 @@ make routerset-download MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 make routerset-materialize MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 make routerset-materialize-clean MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 make routerset-audit MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX MATERIALIZED_DATASET_DIR=outputs/routerset/fix27March
+make routerset-raw-audit MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX ROUTERSET_DIR=routerset
 make clean-cache MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 make train-prepare MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 make smoketest-preflight MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX
 ```
 
-The canonical dataset root is `routerset/multilabel_dataset/`. The routerset training contract is fixed to `8x256x256`. Large `anomaly_detection` inputs are expanded into deterministic `256x256` tiles. Non-tiled tensors larger than `256` are cut out deterministically, and non-tiled tensors smaller than `256` are zero-padded after channel normalization. `burned_area` is the only undersized float-domain expert that now uses centered padding to avoid the asymmetric black slab caused by top-left anchoring. Raw `roads` and `lc` tiles follow the original Phi2FM student preprocessing contract before padding: Sentinel-2 bands are mapped into the 8-channel student layout and scaled by `1/10000`. The float-domain student experts `fire`, `worldfloods`, `burned_area`, and `anomaly_detection` now follow the local Phi2FM downstream contract before padding: channel adaptation first, then per-image channel-wise min-max normalization. The preflight `dataset_report.json` now exposes per-expert normalization modes, compatibility-path source-record counts, and sampled true raw shapes and value-range stats for manifest-shaped rows so swapped-coordinate tile fallbacks and manifest-shape assumptions are visible.
+The canonical dataset root is `routerset/multilabel_dataset/`. The routerset training contract is fixed to `8x256x256`. Large `anomaly_detection` inputs are expanded into deterministic `256x256` tiles. Non-tiled tensors larger than `256` are cut out deterministically, and non-tiled tensors smaller than `256` are zero-padded after channel normalization. `burned_area` raw records were rebuilt from the original OEOBench source and now live in the routerset snapshot as native `7x256x256` scenes instead of downstream `64x128` subpatches. Raw `roads` and `lc` tiles follow the original Phi2FM student preprocessing contract before padding: Sentinel-2 bands are mapped into the 8-channel student layout and scaled by `1/10000`. The float-domain student experts `fire`, `worldfloods`, `burned_area`, and `anomaly_detection` now follow the local Phi2FM downstream contract before padding: channel adaptation first, then per-image channel-wise min-max normalization. Legacy undersized `burned_area` artifacts still use centered padding when encountered, but the canonical routerset raw snapshot no longer depends on that workaround. The preflight `dataset_report.json` now exposes per-expert normalization modes, compatibility-path source-record counts, and sampled true raw shapes and value-range stats for manifest-shaped rows so swapped-coordinate tile fallbacks and manifest-shape assumptions are visible.
+
+To rebuild the raw burned-area slice from source and refresh the local routerset snapshot, use:
+
+```bash
+env PYTHONPATH=src python3 scripts/rebuild_routerset_burned_area_from_source.py --routerset-dir routerset
+```
 
 For a concrete corrected dataset export, use:
 
@@ -175,10 +182,27 @@ make routerset-audit \
 
 This writes `audit/tile_audit.jsonl`, `audit/audit_summary.json`, and plot artifacts under the selected dataset root.
 
+For a full file-by-file audit over the rebuilt raw routerset snapshot itself, use:
+
+```bash
+make routerset-raw-audit \
+  MICROMAMBA_PREFIX=$MICROMAMBA_PREFIX \
+  ROUTERSET_DIR=routerset
+```
+
+This writes `summary.json`, `file_audit.jsonl`, `sample_rows.json`, and plot artifacts under `routerset/multilabel_dataset/audit_raw/`.
+
+To generate an executed sample-gallery notebook for the rebuilt raw snapshot, use:
+
+```bash
+env PYTHONPATH=src .venv/bin/python scripts/generate_routerset_raw_audit_notebook.py --execute
+```
+
 Inspection notebooks:
 
 - [notebooks/routerset_materialized_inspection.ipynb](notebooks/routerset_materialized_inspection.ipynb)
 - [notebooks/routerset_fix27March_audit.ipynb](notebooks/routerset_fix27March_audit.ipynb)
+- [notebooks/routerset_raw_audit.ipynb](notebooks/routerset_raw_audit.ipynb)
 
 The `--prepare-only` path is now the canonical training-readiness step. It configures a local runtime/cache root, writes `runtime_environment.json`, prefetches the six expert checkpoints into a local weights directory, runs the dataset/checkpoint preflight, and executes a startup gate that loads one routerset sample and probes Lightning import before any fit starts.
 The checked-in CLI defaults now use a `120` second startup-gate timeout because cold Lightning imports in this environment can exceed one minute.

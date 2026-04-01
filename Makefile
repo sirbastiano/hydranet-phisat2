@@ -18,7 +18,7 @@ else
 RUNNER = PYTHONPATH=$(PYTHONPATH) $(MICROMAMBA) run -p $(MICROMAMBA_PREFIX) python
 endif
 
-.PHONY: clean-cache routerset-download routerset-materialize routerset-materialize-clean routerset-audit train-prepare full-train smoketest smoketest-preflight
+.PHONY: clean-cache routerset-download routerset-materialize routerset-materialize-clean routerset-audit routerset-raw-audit train-prepare full-train smoketest smoketest-preflight
 MATERIALIZED_DATASET_DIR ?= outputs/routerset/materialized_256
 MATERIALIZED_CLEAN_DATASET_DIR ?= outputs/routerset/materialized_256_clean
 
@@ -47,6 +47,10 @@ routerset-materialize-clean:
 routerset-audit:
 	$(RUNNER) scripts/audit_routerset_dataset.py \
 		--dataset-root $(MATERIALIZED_DATASET_DIR)
+
+routerset-raw-audit:
+	$(RUNNER) scripts/audit_raw_routerset_dataset.py \
+		--routerset-dir $(ROUTERSET_DIR)
 
 train-prepare:
 	$(RUNNER) scripts/train_moe_switcher.py \

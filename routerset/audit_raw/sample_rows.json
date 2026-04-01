@@ -1,0 +1,435 @@
+{
+  "rows": [
+    {
+      "all_zero": false,
+      "dtype": "float32",
+      "image_path": "routerset/images/anomaly_detection/train/0000000_0_0_full_full.npy",
+      "issue_codes": [],
+      "label_names": [
+        "water"
+      ],
+      "layout": "chw",
+      "max": 0.12555456161499023,
+      "mean": 0.07591770589351654,
+      "min": 0.04537959769368172,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats",
+        "large_source_scene"
+      ],
+      "patch_height": null,
+      "patch_width": null,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "water",
+      "shape": [
+        8,
+        4096,
+        4096
+      ],
+      "source_dataset": "anomaly_detection",
+      "source_sample_id": "0000000",
+      "source_split": "train",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 0.020267505198717117,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "float32",
+      "image_path": "routerset/images/anomaly_detection/validation/0000001_0_0_full_full.npy",
+      "issue_codes": [],
+      "label_names": [
+        "cloud",
+        "land",
+        "marine_algae",
+        "turbid_water"
+      ],
+      "layout": "chw",
+      "max": 0.36135321855545044,
+      "mean": 0.08037959039211273,
+      "min": 0.01733107678592205,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats",
+        "large_source_scene"
+      ],
+      "patch_height": null,
+      "patch_width": null,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "cloud,land,marine_algae,turbid_water",
+      "shape": [
+        8,
+        4096,
+        4096
+      ],
+      "source_dataset": "anomaly_detection",
+      "source_sample_id": "0000001",
+      "source_split": "validation",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 0.05384114012122154,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "float32",
+      "image_path": "routerset/images/burned_area/train/0000002_0_0_256_256.npy",
+      "issue_codes": [],
+      "label_names": [
+        "burned_area"
+      ],
+      "layout": "chw",
+      "max": 0.9154667854309082,
+      "mean": 0.5195792317390442,
+      "min": 0.27564412355422974,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats"
+      ],
+      "patch_height": 256,
+      "patch_width": 256,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "burned_area",
+      "shape": [
+        7,
+        256,
+        256
+      ],
+      "source_dataset": "burned_area",
+      "source_sample_id": "0000002",
+      "source_split": "train",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 0.13655874133110046,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "float32",
+      "image_path": "routerset/images/burned_area/validation/0000085_0_0_256_256.npy",
+      "issue_codes": [],
+      "label_names": [
+        "water"
+      ],
+      "layout": "chw",
+      "max": 0.8377116918563843,
+      "mean": 0.4195631146430969,
+      "min": 0.20250312983989716,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats"
+      ],
+      "patch_height": 256,
+      "patch_width": 256,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "water",
+      "shape": [
+        7,
+        256,
+        256
+      ],
+      "source_dataset": "burned_area",
+      "source_sample_id": "0000085",
+      "source_split": "validation",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 0.10784338414669037,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "float32",
+      "image_path": "routerset/images/fire/train/0002292_0_0_full_full.npy",
+      "issue_codes": [],
+      "label_names": [
+        "active_fire"
+      ],
+      "layout": "chw",
+      "max": 0.29761406779289246,
+      "mean": 0.17665749788284302,
+      "min": 0.0967986136674881,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats"
+      ],
+      "patch_height": null,
+      "patch_width": null,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "active_fire",
+      "shape": [
+        8,
+        256,
+        256
+      ],
+      "source_dataset": "fire",
+      "source_sample_id": "0002292",
+      "source_split": "train",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 0.041725706309080124,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "float32",
+      "image_path": "routerset/images/fire/validation/0000065_0_0_full_full.npy",
+      "issue_codes": [],
+      "label_names": [],
+      "layout": "chw",
+      "max": 0.3223167657852173,
+      "mean": 0.1303606629371643,
+      "min": 0.035020895302295685,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats"
+      ],
+      "patch_height": null,
+      "patch_width": null,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "explicit_negative",
+      "selection_bucket": "<empty>",
+      "shape": [
+        8,
+        256,
+        256
+      ],
+      "source_dataset": "fire",
+      "source_sample_id": "0000065",
+      "source_split": "validation",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 0.06840858608484268,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "uint16",
+      "image_path": "routerset/images/lc/train/52shot_train_000000_0_0_128_128.npy",
+      "issue_codes": [],
+      "label_names": [
+        "grassland",
+        "tree_cover"
+      ],
+      "layout": "hwc",
+      "max": 1361.0,
+      "mean": 297.897216796875,
+      "min": 172.0,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats",
+        "raw_uint16_reflectance"
+      ],
+      "patch_height": 128,
+      "patch_width": 128,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "grassland,tree_cover",
+      "shape": [
+        128,
+        128,
+        10
+      ],
+      "source_dataset": "lc",
+      "source_sample_id": "52shot_train_000000",
+      "source_split": "train",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 99.27837741785736,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "uint16",
+      "image_path": "routerset/images/lc/validation/52shot_val_000000_0_0_128_128.npy",
+      "issue_codes": [],
+      "label_names": [
+        "tree_cover"
+      ],
+      "layout": "hwc",
+      "max": 1612.0,
+      "mean": 221.5374755859375,
+      "min": 108.0,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats",
+        "raw_uint16_reflectance"
+      ],
+      "patch_height": 128,
+      "patch_width": 128,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "tree_cover",
+      "shape": [
+        128,
+        128,
+        10
+      ],
+      "source_dataset": "lc",
+      "source_sample_id": "52shot_val_000000",
+      "source_split": "validation",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 98.4248407627577,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "uint16",
+      "image_path": "routerset/images/roads/train/500shot_train_000001_0_0_128_128.npy",
+      "issue_codes": [],
+      "label_names": [
+        "road_present"
+      ],
+      "layout": "hwc",
+      "max": 976.0,
+      "mean": 626.89501953125,
+      "min": 444.0,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats",
+        "raw_uint16_reflectance"
+      ],
+      "patch_height": 128,
+      "patch_width": 128,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "road_present",
+      "shape": [
+        128,
+        128,
+        10
+      ],
+      "source_dataset": "roads",
+      "source_sample_id": "500shot_train_000001",
+      "source_split": "train",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 73.18178861014061,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "uint16",
+      "image_path": "routerset/images/roads/validation/500shot_val_000001_0_0_128_128.npy",
+      "issue_codes": [],
+      "label_names": [
+        "road_present"
+      ],
+      "layout": "hwc",
+      "max": 1582.0,
+      "mean": 773.205322265625,
+      "min": 383.0,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats",
+        "raw_uint16_reflectance"
+      ],
+      "patch_height": 128,
+      "patch_width": 128,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "road_present",
+      "shape": [
+        128,
+        128,
+        10
+      ],
+      "source_dataset": "roads",
+      "source_sample_id": "500shot_val_000001",
+      "source_split": "validation",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 211.18604993350587,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "float32",
+      "image_path": "routerset/images/worldfloods/train/0000071_0_256_256_256.npy",
+      "issue_codes": [],
+      "label_names": [
+        "cloud",
+        "water"
+      ],
+      "layout": "chw",
+      "max": 0.36660000681877136,
+      "mean": 0.20094475150108337,
+      "min": 0.11089999973773956,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats"
+      ],
+      "patch_height": 256,
+      "patch_width": 256,
+      "patch_x": 256,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "cloud,water",
+      "shape": [
+        8,
+        256,
+        256
+      ],
+      "source_dataset": "worldfloods",
+      "source_sample_id": "0000071",
+      "source_split": "train",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 0.04677774757146835,
+      "zero_fraction": 0.0
+    },
+    {
+      "all_zero": false,
+      "dtype": "float32",
+      "image_path": "routerset/images/worldfloods/validation/0000803_0_0_256_256.npy",
+      "issue_codes": [],
+      "label_names": [
+        "cloud",
+        "land",
+        "water"
+      ],
+      "layout": "chw",
+      "max": 1.114400029182434,
+      "mean": 0.38650524616241455,
+      "min": 0.07240000367164612,
+      "non_finite_count": 0,
+      "note_codes": [
+        "sampled_large_array_stats"
+      ],
+      "patch_height": 256,
+      "patch_width": 256,
+      "patch_x": 0,
+      "patch_y": 0,
+      "record_status": "positive",
+      "selection_bucket": "cloud,land,water",
+      "shape": [
+        8,
+        256,
+        256
+      ],
+      "source_dataset": "worldfloods",
+      "source_sample_id": "0000803",
+      "source_split": "validation",
+      "stats_sampled": true,
+      "status": "ok",
+      "std": 0.19300375878810883,
+      "zero_fraction": 0.0
+    }
+  ]
+}

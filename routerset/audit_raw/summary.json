@@ -1,0 +1,168 @@
+{
+  "dataset_root": "routerset",
+  "file_audit_path": "routerset/audit_raw/file_audit.jsonl",
+  "issue_counts": {},
+  "manifest_path": "routerset/manifest.jsonl",
+  "note_counts": {
+    "large_source_scene": 2,
+    "raw_uint16_reflectance": 4,
+    "sampled_large_array_stats": 12
+  },
+  "per_dataset": {
+    "anomaly_detection": {
+      "row_count": 36,
+      "sample_dtype_counts": {
+        "float32": 2
+      },
+      "sample_layout_counts": {
+        "chw": 2
+      },
+      "sample_shape_counts": {
+        "8x4096x4096": 2
+      },
+      "sample_zero_fraction": {
+        "max": 0.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0
+      },
+      "split_counts": {
+        "train": 25,
+        "validation": 11
+      },
+      "status_counts": {
+        "ok": 36
+      }
+    },
+    "burned_area": {
+      "row_count": 1299,
+      "sample_dtype_counts": {
+        "float32": 2
+      },
+      "sample_layout_counts": {
+        "chw": 2
+      },
+      "sample_shape_counts": {
+        "7x256x256": 2
+      },
+      "sample_zero_fraction": {
+        "max": 0.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0
+      },
+      "split_counts": {
+        "train": 999,
+        "validation": 300
+      },
+      "status_counts": {
+        "ok": 1299
+      }
+    },
+    "fire": {
+      "row_count": 1600,
+      "sample_dtype_counts": {
+        "float32": 2
+      },
+      "sample_layout_counts": {
+        "chw": 2
+      },
+      "sample_shape_counts": {
+        "8x256x256": 2
+      },
+      "sample_zero_fraction": {
+        "max": 0.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0
+      },
+      "split_counts": {
+        "train": 1586,
+        "validation": 14
+      },
+      "status_counts": {
+        "ok": 1600
+      }
+    },
+    "lc": {
+      "row_count": 63,
+      "sample_dtype_counts": {
+        "uint16": 2
+      },
+      "sample_layout_counts": {
+        "hwc": 2
+      },
+      "sample_shape_counts": {
+        "128x128x10": 2
+      },
+      "sample_zero_fraction": {
+        "max": 0.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0
+      },
+      "split_counts": {
+        "train": 52,
+        "validation": 11
+      },
+      "status_counts": {
+        "ok": 63
+      }
+    },
+    "roads": {
+      "row_count": 4800,
+      "sample_dtype_counts": {
+        "uint16": 2
+      },
+      "sample_layout_counts": {
+        "hwc": 2
+      },
+      "sample_shape_counts": {
+        "128x128x10": 2
+      },
+      "sample_zero_fraction": {
+        "max": 0.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0
+      },
+      "split_counts": {
+        "train": 4000,
+        "validation": 800
+      },
+      "status_counts": {
+        "ok": 4800
+      }
+    },
+    "worldfloods": {
+      "row_count": 2353,
+      "sample_dtype_counts": {
+        "float32": 2
+      },
+      "sample_layout_counts": {
+        "chw": 2
+      },
+      "sample_shape_counts": {
+        "8x256x256": 2
+      },
+      "sample_zero_fraction": {
+        "max": 0.0,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0
+      },
+      "split_counts": {
+        "train": 1870,
+        "validation": 483
+      },
+      "status_counts": {
+        "ok": 2353
+      }
+    }
+  },
+  "row_count": 10151,
+  "sample_rows_path": "routerset/audit_raw/sample_rows.json",
+  "status_counts": {
+    "ok": 10151
+  }
+}
