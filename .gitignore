@@ -213,3 +213,8 @@ tmp/
 
 AGENTS.md
 onnx/
+.agents/
+.codex
+.tasks/
+.github/
+templates/
