@@ -43,7 +43,7 @@ def _make_student_checkpoint_compatible(model: PhisatNet, state_dict: dict) -> d
 
 
 def load_student(
-    preset: str = "checkpoint",  # Changed default to match HF checkpoint architecture
+    preset: str = DEFAULT_STUDENT_CONFIG,
     *,
     task: Optional[str] = None,
     n_shots: Optional[int] = None,

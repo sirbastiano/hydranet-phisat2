@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PhisatNet - U-Net architecture optimized for Myriad 2 VPU inference
+PhisatNet - U-Net architecture compatible with published checkpoints
 Designed for satellite imagery processing with configurable depth and channel multipliers.
 """
 
@@ -8,16 +8,9 @@ import torch
 import torch.nn as nn
 from typing import Any, Dict, List
 
-DEFAULT_STUDENT_CONFIG = "myriad_optimized"
+DEFAULT_STUDENT_CONFIG = "checkpoint"
 
 STUDENT_CONFIGS = {
-    "default": {
-        "n_channels": 8,
-        "n_classes": 3,
-        "base_filters": 32,
-        "depth": 3,
-        "channel_multipliers": [1, 2, 2, 3],
-    },
     "checkpoint": {
         # Matches the architecture used in HuggingFace checkpoints
         "n_channels": 8,
@@ -25,27 +18,6 @@ STUDENT_CONFIGS = {
         "base_filters": 16,
         "depth": 3,
         "channel_multipliers": [1, 2, 4, 8],
-    },
-    "small": {
-        "n_channels": 8,
-        "n_classes": 3,
-        "base_filters": 16,
-        "depth": 3,
-        "channel_multipliers": [1, 1, 1, 1],
-    },
-    "large": {
-        "n_channels": 8,
-        "n_classes": 3,
-        "base_filters": 64,
-        "depth": 3,
-        "channel_multipliers": [1, 2, 3, 4],
-    },
-    "myriad_optimized": {
-        "n_channels": 8,
-        "n_classes": 3,
-        "base_filters": 48,
-        "depth": 3,
-        "channel_multipliers": [1, 2, 2, 3],
     },
 }
 
@@ -334,11 +306,7 @@ def create_phisatnet(config: str = DEFAULT_STUDENT_CONFIG, **overrides: Any) -> 
     Factory function to create PhisatNet with predefined configurations.
 
     Args:
-        config (str): Configuration preset. Options:
-            - 'default': Standard configuration
-            - 'small': Smaller model for fast inference
-            - 'large': Larger model for better accuracy
-            - 'myriad_optimized': Optimized for Myriad 2 VPU (default)
+        config (str): Configuration preset. Only 'checkpoint' is available.
         **overrides: Optional keyword overrides for any PhisatNet init arg.
 
     Returns:
@@ -363,8 +331,8 @@ if __name__ == '__main__':
     # Example usage
     print("=== PhisatNet Model Examples ===\n")
     
-    # Create different model configurations
-    configs_to_test = ['default', 'small', 'large', 'myriad_optimized']
+    # Create the checkpoint-compatible model configuration.
+    configs_to_test = [DEFAULT_STUDENT_CONFIG]
     
     for config_name in configs_to_test:
         print(f"Configuration: {config_name}")
@@ -374,7 +342,7 @@ if __name__ == '__main__':
     
     # Test forward pass
     print("=== Testing Forward Pass ===")
-    model = create_phisatnet('default')
+    model = create_phisatnet()
     model.eval()
     
     # Create dummy input (batch_size=1, channels=8, height=256, width=256)

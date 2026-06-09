@@ -22,16 +22,16 @@ If you prefer not to install, run with `PYTHONPATH=src`.
 
 ## Loading Models
 
-### Student (default: Myriad optimized) - Namely the `HydraNet`, which is the default when calling `load_student()` without arguments.
+### Student (default: checkpoint-compatible) - Namely the `HydraNet`, which is the default when calling `load_student()` without arguments.
 
 ```python
 from hydranet import load_student, available_student_presets
 
-model = load_student()  # uses "myriad_optimized" by default
+model = load_student()  # uses "checkpoint" by default
 print(available_student_presets())
 
 custom = load_student(
-    preset="myriad_optimized",
+    preset="checkpoint",
     n_classes=4,  # overrides allowed
 )
 ```
@@ -82,28 +82,6 @@ print(components)  # Display component summary
 ```
 
 **Available:** 139 pre-trained model configurations from `sirbastiano/hydranet-phisat2` on HuggingFace.
-
-## Finding the Myriad-Optimized Model
-
-The `myriad_optimized` preset was selected through systematic architecture search (see [notebooks/FindHydraNet.ipynb](notebooks/FindHydraNet.ipynb)):
-
-1. **Search Space**: Evaluated 100+ configurations varying:
-   - Base filters: 8, 16, 32
-   - Channel multipliers: [1,2,3], [1,2,3,4], etc.
-   - Depth: 2, 3, 4 blocks
-   - Patch sizes: 28×28 to 224×224
-
-2. **Optimization Criteria**:
-   - Total inference time across 4096×4096 tile
-   - Parameter count vs accuracy trade-off
-   - Hardware constraints (Myriad X VPU)
-
-3. **Result**: 16 base filters, [1,2,3,4] multipliers, depth=3
-   - ~60K parameters
-   - Optimal latency/accuracy balance
-   - Fits Myriad X memory and compute budget
-
-The analysis used 3D visualization (parameters × depth × latency) to identify the Pareto-optimal configuration.
 
 ## Repo Layout
 
